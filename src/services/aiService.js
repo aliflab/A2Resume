@@ -194,6 +194,116 @@ function toGeminiSchema(schema) {
   return out;
 }
 
+
+/**
+ * Builds a registry entry for any OpenAI-compatible /chat/completions provider.
+ * OpenAI, DeepSeek and Kimi differ only in URL, model list, which JSON mode
+ * they accept, and the name of the max-tokens field -- so response reading and
+ * model-not-found detection are written once here and shared by all three.
+ */
+function openAiCompatible({
+  label,
+  url,
+  models,
+  supportsJsonSchema,
+  maxTokensField = 'max_tokens',
+  extraHeaders = {},
+}) {
+  return {
+    label,
+    models,
+    supportsJsonSchema,
+
+    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+      const useJsonSchema = supportsJsonSchema && Boolean(schema);
+
+      // json_object mode enforces nothing, so the schema has to travel in the
+      // prompt. DeepSeek additionally requires the word "json" to appear.
+      const system = useJsonSchema ? systemPrompt : withJsonInstruction(systemPrompt, schema);
+
+      const messages = [];
+      if (system) messages.push({ role: 'system', content: system });
+      messages.push({ role: 'user', content: userPrompt });
+
+      const body = {
+        model,
+        messages,
+        response_format: useJsonSchema
+          ? {
+              type: 'json_schema',
+              json_schema: {
+                name: 'structured_output',
+                schema: toOpenAiSchema(schema),
+                strict: true,
+              },
+            }
+          : { type: 'json_object' },
+      };
+      if (maxOutputTokens) body[maxTokensField] = maxOutputTokens;
+
+      return {
+        url,
+        init: {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            ...extraHeaders,
+          },
+          body: JSON.stringify(body),
+        },
+      };
+    },
+
+    extractText(body, ctx) {
+      const choice = body?.choices?.[0];
+      if (choice?.message?.refusal) {
+        throw new AiError('blocked', `${label} refused the request: ${choice.message.refusal}`, ctx);
+      }
+      if (choice?.finish_reason === 'length') {
+        throw new AiError('parse', `${label} hit its output token limit before finishing.`, ctx);
+      }
+      const content = (choice?.message?.content || '').trim();
+      if (content === '') {
+        // DeepSeek documents this as an occasional json_object failure mode.
+        throw new AiError('parse', `${label} returned empty content. Try rephrasing the prompt.`, ctx);
+      }
+      return content;
+    },
+
+    isModelNotFound(status, body) {
+      if (status === 404) return true;
+      const code = body?.error?.code || '';
+      const msg = body?.error?.message || '';
+      return (
+        code === 'model_not_found' ||
+        /does not exist|do not have access|invalid model|unknown model/i.test(msg)
+      );
+    },
+
+    errorMessage(body, rawText) {
+      return body?.error?.message || rawText || '';
+    },
+  };
+}
+
+/**
+ * Fold the schema into the system prompt for providers stuck on json_object.
+ * Also guarantees the literal word "json" is present, which DeepSeek requires.
+ */
+function withJsonInstruction(systemPrompt, schema) {
+  const instruction = schema
+    ? `Respond with a single json object conforming to this JSON Schema:
+${JSON.stringify(schema)}
+Output json only, with no prose and no code fences.`
+    : 'Respond with valid json only, with no prose and no code fences.';
+
+  if (!systemPrompt) return instruction;
+  return `${systemPrompt}
+
+${instruction}`;
+}
+
 // ---------------------------------------------------------------------------
 // Provider registry
 //
@@ -269,62 +379,30 @@ const PROVIDERS = {
     },
   },
 
-  openai: {
+  openai: openAiCompatible({
     label: 'OpenAI',
+    url: 'https://api.openai.com/v1/chat/completions',
     models: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-4o-mini'],
+    supportsJsonSchema: true,
+    // Current OpenAI models reject the legacy `max_tokens`.
+    maxTokensField: 'max_completion_tokens',
+  }),
 
-    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
-      const messages = [];
-      if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-      messages.push({ role: 'user', content: userPrompt });
+  deepseek: openAiCompatible({
+    label: 'DeepSeek',
+    url: 'https://api.deepseek.com/v1/chat/completions',
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    // DeepSeek documents json_object only -- no json_schema, no strict mode.
+    // The schema is pushed into the prompt instead; see withJsonInstruction().
+    supportsJsonSchema: false,
+  }),
 
-      // json_schema + strict gives decode-time enforcement; json_object is the
-      // fallback when the caller has no schema to enforce.
-      const responseFormat = schema
-        ? {
-            type: 'json_schema',
-            json_schema: { name: 'structured_output', schema: toOpenAiSchema(schema), strict: true },
-          }
-        : { type: 'json_object' };
-
-      const body = { model, messages, response_format: responseFormat };
-      if (maxOutputTokens) body.max_completion_tokens = maxOutputTokens;
-
-      return {
-        url: 'https://api.openai.com/v1/chat/completions',
-        init: {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(body),
-        },
-      };
-    },
-
-    extractText(body, ctx) {
-      const choice = body?.choices?.[0];
-      if (choice?.message?.refusal) {
-        throw new AiError('blocked', `OpenAI refused the request: ${choice.message.refusal}`, ctx);
-      }
-      if (choice?.finish_reason === 'length') {
-        throw new AiError('parse', 'OpenAI hit its output token limit before finishing.', ctx);
-      }
-      return (choice?.message?.content || '').trim();
-    },
-
-    isModelNotFound(status, body) {
-      if (status === 404) return true;
-      const code = body?.error?.code || '';
-      const msg = body?.error?.message || '';
-      return code === 'model_not_found' || /does not exist|do not have access/i.test(msg);
-    },
-
-    errorMessage(body, rawText) {
-      return body?.error?.message || rawText || '';
-    },
-  },
+  kimi: openAiCompatible({
+    label: 'Kimi',
+    url: 'https://api.moonshot.ai/v1/chat/completions',
+    models: ['kimi-k3', 'kimi-k2.6', 'kimi-k2.5'],
+    supportsJsonSchema: true,
+  }),
 };
 
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);

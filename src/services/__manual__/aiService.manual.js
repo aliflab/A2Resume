@@ -2,7 +2,7 @@
  * Manual smoke test for aiService. Not imported by the app and not part of the
  * build -- run it by hand from the browser console (see CLAUDE.md).
  *
- * Exercises gemini and openai independently with a trivial prompt + schema.
+ * Exercises every wired provider independently with a trivial prompt + schema.
  * Prints masked keys only; key values are never logged.
  */
 
@@ -25,7 +25,7 @@ const mask = (key) => (key ? `${key.slice(0, 4)}…${key.slice(-2)} (${key.lengt
 
 /**
  * Run both checks against one provider.
- * @param {'gemini'|'openai'} provider
+ * @param {'gemini'|'openai'|'deepseek'|'kimi'} provider
  * @param {string} apiKey
  */
 export async function testProvider(provider, apiKey) {
