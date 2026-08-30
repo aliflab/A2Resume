@@ -25,7 +25,7 @@ const mask = (key) => (key ? `${key.slice(0, 4)}…${key.slice(-2)} (${key.lengt
 
 /**
  * Run both checks against one provider.
- * @param {'gemini'|'openai'|'deepseek'|'kimi'} provider
+ * @param {'gemini'|'openai'|'deepseek'|'kimi'|'claude'} provider
  * @param {string} apiKey
  */
 export async function testProvider(provider, apiKey) {

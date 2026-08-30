@@ -214,31 +214,43 @@ function openAiCompatible({
     models,
     supportsJsonSchema,
 
-    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
-      const useJsonSchema = supportsJsonSchema && Boolean(schema);
-
-      // json_object mode enforces nothing, so the schema has to travel in the
-      // prompt. DeepSeek additionally requires the word "json" to appear.
-      const system = useJsonSchema ? systemPrompt : withJsonInstruction(systemPrompt, schema);
-
-      const messages = [];
-      if (system) messages.push({ role: 'system', content: system });
-      messages.push({ role: 'user', content: userPrompt });
-
-      const body = {
-        model,
-        messages,
-        response_format: useJsonSchema
-          ? {
+    /**
+     * Structured-output strategy for this family: a `response_format` fragment.
+     * Providers without json_schema fall back to json_object, which enforces
+     * nothing -- so the schema is folded into the system prompt instead.
+     */
+    structuredMode({ schema, systemPrompt }) {
+      if (supportsJsonSchema && schema) {
+        return {
+          body: {
+            response_format: {
               type: 'json_schema',
               json_schema: {
                 name: 'structured_output',
                 schema: toOpenAiSchema(schema),
                 strict: true,
               },
-            }
-          : { type: 'json_object' },
+            },
+          },
+          systemPrompt,
+        };
+      }
+      return {
+        body: { response_format: { type: 'json_object' } },
+        systemPrompt: withJsonInstruction(systemPrompt, schema),
       };
+    },
+
+    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+      const structured = this.structuredMode({ schema, systemPrompt });
+
+      const messages = [];
+      if (structured.systemPrompt) {
+        messages.push({ role: 'system', content: structured.systemPrompt });
+      }
+      messages.push({ role: 'user', content: userPrompt });
+
+      const body = { model, messages, ...structured.body };
       if (maxOutputTokens) body[maxTokensField] = maxOutputTokens;
 
       return {
@@ -323,17 +335,24 @@ const PROVIDERS = {
       'gemini-flash-latest',
     ],
 
-    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+    /** Structured-output strategy: a `generationConfig` fragment. */
+    structuredMode({ schema, systemPrompt }) {
       const generationConfig = { responseMimeType: 'application/json' };
       if (schema) generationConfig.responseSchema = toGeminiSchema(schema);
+      return { body: { generationConfig }, systemPrompt };
+    },
+
+    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+      const structured = this.structuredMode({ schema, systemPrompt });
+      const generationConfig = { ...structured.body.generationConfig };
       if (maxOutputTokens) generationConfig.maxOutputTokens = maxOutputTokens;
 
       const body = {
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         generationConfig,
       };
-      if (systemPrompt) {
-        body.systemInstruction = { parts: [{ text: systemPrompt }] };
+      if (structured.systemPrompt) {
+        body.systemInstruction = { parts: [{ text: structured.systemPrompt }] };
       }
 
       return {
@@ -403,6 +422,94 @@ const PROVIDERS = {
     models: ['kimi-k3', 'kimi-k2.6', 'kimi-k2.5'],
     supportsJsonSchema: true,
   }),
+
+  claude: {
+    label: 'Claude',
+    // Bare IDs only -- never date-suffixed. All four are documented as
+    // supporting output_config.format.
+    models: ['claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-sonnet-4-6'],
+
+    /**
+     * Structured-output strategy: `output_config.format`. Anthropic does have a
+     * native response-format equivalent, so this needs no tool-use plumbing --
+     * the constrained JSON comes back in an ordinary text block.
+     */
+    structuredMode({ schema, systemPrompt }) {
+      if (!schema) return { body: {}, systemPrompt: withJsonInstruction(systemPrompt, schema) };
+      return {
+        body: {
+          output_config: {
+            format: { type: 'json_schema', schema: toOpenAiSchema(schema) },
+          },
+        },
+        systemPrompt,
+      };
+    },
+
+    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+      const structured = this.structuredMode({ schema, systemPrompt });
+
+      const body = {
+        model,
+        // Always sent. Thinking is on by default on current models and shares
+        // this budget, so a tiny ceiling starves the answer -- floor it.
+        max_tokens: maxOutputTokens ? Math.max(maxOutputTokens, 1024) : 16000,
+        messages: [{ role: 'user', content: userPrompt }],
+        ...structured.body,
+      };
+      // `system` is a top-level parameter; there is no system message role.
+      if (structured.systemPrompt) body.system = structured.systemPrompt;
+
+      return {
+        url: 'https://api.anthropic.com/v1/messages',
+        init: {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            // Required for direct browser calls. Safe here only because the key
+            // is the user's own (BYOK) and never leaves their machine.
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify(body),
+        },
+      };
+    },
+
+    extractText(body, ctx) {
+      if (body?.stop_reason === 'refusal') {
+        const category = body?.stop_details?.category;
+        throw new AiError(
+          'blocked',
+          `Claude declined the request${category ? ` (${category})` : ''}.`,
+          ctx
+        );
+      }
+      if (body?.stop_reason === 'max_tokens') {
+        throw new AiError('parse', 'Claude hit its output token limit before finishing.', ctx);
+      }
+      // Skip thinking blocks -- adaptive thinking is on by default.
+      const text = (body?.content || [])
+        .filter((block) => block?.type === 'text')
+        .map((block) => block.text || '')
+        .join('')
+        .trim();
+      if (text === '') {
+        throw new AiError('parse', 'Claude returned no text content.', ctx);
+      }
+      return text;
+    },
+
+    isModelNotFound(status, body) {
+      if (status === 404) return true;
+      return body?.error?.type === 'not_found_error';
+    },
+
+    errorMessage(body, rawText) {
+      return body?.error?.message || rawText || '';
+    },
+  },
 };
 
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
@@ -498,7 +605,7 @@ async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs 
  * Call a provider and return parsed JSON.
  *
  * @param {object} options
- * @param {'gemini'|'openai'} options.provider
+ * @param {'gemini'|'openai'|'deepseek'|'kimi'|'claude'} options.provider
  * @param {string} options.apiKey
  * @param {string} [options.model] Pin a single model, skipping the fallback list.
  * @param {string} [options.systemPrompt]
@@ -545,7 +652,7 @@ export async function callStructured({
 /**
  * Cheapest valid call that proves a key works.
  *
- * @param {{ provider: 'gemini'|'openai', apiKey: string }} options
+ * @param {{ provider: 'gemini'|'openai'|'deepseek'|'kimi'|'claude', apiKey: string }} options
  * @returns {Promise<{ success: boolean, provider: string, model?: string, error?: string, code?: string }>}
  */
 export async function testConnection({ provider, apiKey }) {
