@@ -99,25 +99,31 @@ async function fetchWithTimeout(url, init, timeoutMs, ctx) {
 /**
  * Strip markdown fences, parse JSON, and salvage the first top-level object or
  * array before giving up. Never returns partial or malformed data silently.
- * @param {string} text
- * @returns {any}
+ *
+ * `fenced` and `salvaged` are diagnostics: either being true means the provider
+ * did not return clean JSON, which is a signal that its prompt needs
+ * tightening rather than something to paper over.
+ *
+ * @returns {{ data: any, fenced: boolean, salvaged: boolean }}
  */
-export function parseStructured(text, ctx = {}) {
+export function parseStructuredWithMeta(text, ctx = {}) {
   if (typeof text !== 'string' || text.trim() === '') {
     throw new AiError('parse', 'The model returned an empty response.', ctx);
   }
 
   let cleaned = text.trim();
+  let fenced = false;
 
   // ```json ... ``` or ``` ... ```
   if (cleaned.startsWith('```')) {
+    fenced = true;
     cleaned = cleaned.replace(/^```[a-zA-Z]*\s*/, '');
     if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3);
     cleaned = cleaned.trim();
   }
 
   try {
-    return JSON.parse(cleaned);
+    return { data: JSON.parse(cleaned), fenced, salvaged: false };
   } catch (primaryErr) {
     for (const [open, close] of [
       ['{', '}'],
@@ -127,7 +133,7 @@ export function parseStructured(text, ctx = {}) {
       const last = cleaned.lastIndexOf(close);
       if (first !== -1 && last > first) {
         try {
-          return JSON.parse(cleaned.slice(first, last + 1));
+          return { data: JSON.parse(cleaned.slice(first, last + 1)), fenced, salvaged: true };
         } catch {
           // fall through to the next shape
         }
@@ -138,6 +144,16 @@ export function parseStructured(text, ctx = {}) {
       cause: primaryErr,
     });
   }
+}
+
+/**
+ * Parse-only form. Use parseStructuredWithMeta when you care whether the
+ * provider needed fence-stripping or salvage.
+ * @param {string} text
+ * @returns {any}
+ */
+export function parseStructured(text, ctx = {}) {
+  return parseStructuredWithMeta(text, ctx).data;
 }
 
 function requireApiKey(provider, apiKey) {
@@ -645,8 +661,11 @@ export async function callStructured({
     buildArgs: { systemPrompt, userPrompt, schema },
   });
 
-  const data = parseStructured(text, { provider, model: usedModel });
-  return { data, provider, model: usedModel };
+  const { data, fenced, salvaged } = parseStructuredWithMeta(text, {
+    provider,
+    model: usedModel,
+  });
+  return { data, provider, model: usedModel, fenced, salvaged };
 }
 
 /**
