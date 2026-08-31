@@ -80,9 +80,19 @@ export const ACTIONS = {
   SET_STAGE: 'set_stage',
   SET_ERROR: 'set_error',
 
+  /** Append user-approved inferred skills to resume.skills. */
+  MERGE_INFERRED_SKILLS: 'merge_inferred_skills',
+
   /** Clear every pipeline artefact without touching settings. */
   CLEAR_ANALYSIS: 'clear_analysis',
 };
+
+/**
+ * Category the inference step files its suggestions under. Kept distinct from
+ * whatever the resume itself declared, so an approved *inference* is never
+ * silently indistinguishable from something the candidate actually wrote.
+ */
+export const INFERRED_SKILLS_CATEGORY = 'Inferred from experience';
 
 export function appReducer(state, action) {
   switch (action.type) {
@@ -124,6 +134,41 @@ export function appReducer(state, action) {
           stage: action.payload ? null : state.ui.stage,
         },
       };
+
+    // Appends only. It never rewrites an existing category's list, never
+    // touches any other part of the resume, and de-duplicates against every
+    // skill already present so an approval cannot create a double entry.
+    case ACTIONS.MERGE_INFERRED_SKILLS: {
+      const incoming = Array.isArray(action.payload) ? action.payload.filter((s) => typeof s === 'string' && s.trim()) : [];
+      if (incoming.length === 0) return state;
+
+      const resume = state.resume && typeof state.resume === 'object' ? state.resume : {};
+      const groups = Array.isArray(resume.skills) ? resume.skills : [];
+
+      const key = (s) => s.toLowerCase().replace(/[^a-z0-9+#]/g, '');
+      const existing = new Set(
+        groups.flatMap((g) => (Array.isArray(g?.skills) ? g.skills : [])).filter((s) => typeof s === 'string').map(key)
+      );
+
+      const fresh = [];
+      for (const skill of incoming) {
+        const k = key(skill);
+        if (!k || existing.has(k)) continue;
+        existing.add(k);
+        fresh.push(skill.trim());
+      }
+      if (fresh.length === 0) return state;
+
+      const at = groups.findIndex((g) => g?.category === INFERRED_SKILLS_CATEGORY);
+      const skills =
+        at === -1
+          ? [...groups, { category: INFERRED_SKILLS_CATEGORY, skills: fresh }]
+          : groups.map((g, i) =>
+              i === at ? { ...g, skills: [...(Array.isArray(g.skills) ? g.skills : []), ...fresh] } : g
+            );
+
+      return { ...state, resume: { ...resume, skills } };
+    }
 
     case ACTIONS.CLEAR_ANALYSIS:
       return {

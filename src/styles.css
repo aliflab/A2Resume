@@ -422,3 +422,307 @@ body {
     flex-basis: 100%;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Analyze (step 2). Reuses .card, .notice, .badge, .inline-status, .actions.
+   -------------------------------------------------------------------------- */
+
+.analyze {
+  max-width: 56rem;
+}
+
+.analyze__step {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.analyze__head h1 {
+  margin: 0.25rem 0 0.4rem;
+}
+
+.analyze__head {
+  margin-bottom: 1.5rem;
+}
+
+/* Sits above the score on purpose: a low grade caused by missing data is a
+   different message from a low grade caused by a weak resume. */
+.analyze__fallback ul {
+  margin: 0.4rem 0;
+  padding-left: 1.2rem;
+}
+
+.card > h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+/* Score ------------------------------------------------------------------ */
+
+.score {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.score__grade {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.score__grade--a, .score__grade--b { color: #2e8b57; }
+.score__grade--c { color: #c98a00; }
+.score__grade--d, .score__grade--f { color: #c0392b; }
+
+.score__total {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.score__total .muted {
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.criteria {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.criterion {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.criterion:first-child {
+  border-top: none;
+}
+
+.criterion--unscoreable {
+  opacity: 0.55;
+}
+
+.criterion__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+.criterion__label {
+  font-weight: 500;
+}
+
+.criterion__value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meter {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.2);
+  margin-top: 0.4rem;
+  overflow: hidden;
+}
+
+.meter__fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.meter__fill--good { background: #2e8b57; }
+.meter__fill--mid  { background: #c98a00; }
+.meter__fill--poor { background: #c0392b; }
+
+.criterion__notes {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+/* Keywords --------------------------------------------------------------- */
+
+.buckets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.bucket__title {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.bucket__title--ok   { color: #2e8b57; }
+.bucket__title--warn { color: #c98a00; }
+.bucket__title--poor { color: #c0392b; }
+
+.bucket__blurb {
+  margin: 0 0 0.6rem;
+}
+
+.bucket__group {
+  margin-bottom: 0.75rem;
+}
+
+.bucket__priority {
+  margin: 0 0 0.3rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+}
+
+.chip {
+  font-size: 0.8rem !important;
+  padding: 0.15rem 0.5rem !important;
+  border-radius: 999px !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chip--ok   { border-color: rgba(46, 139, 87, 0.5) !important; }
+.chip--warn { border-color: rgba(201, 138, 0, 0.5) !important; }
+.chip--poor { border-color: rgba(192, 57, 43, 0.5) !important; }
+
+.chip--open {
+  border-color: currentColor !important;
+}
+
+.chip__count {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip__detail {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.8rem;
+  opacity: 0.8;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--line);
+}
+
+/* Recommendations -------------------------------------------------------- */
+
+.recs {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.rec {
+  display: flex;
+  gap: 0.7rem;
+  align-items: baseline;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.rec:first-child {
+  border-top: none;
+}
+
+.rec__severity {
+  flex: none;
+  width: 5.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.rec--critical .rec__severity  { color: #c0392b; }
+.rec--important .rec__severity { color: #c98a00; }
+
+/* Skill inference gate --------------------------------------------------- */
+
+.infer {
+  border-color: var(--accent);
+}
+
+.suggestions {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+
+.suggestion {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.suggestion:first-child {
+  border-top: none;
+}
+
+.suggestion--approved {
+  border-left: 3px solid #2e8b57;
+  padding-left: 0.7rem;
+}
+
+.suggestion--rejected {
+  opacity: 0.45;
+  border-left: 3px solid var(--line);
+  padding-left: 0.7rem;
+}
+
+.suggestion__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.suggestion__skill {
+  font-weight: 600;
+}
+
+/* The cited line. Shown, never collapsed: approving the evidence is the
+   whole point of the gate. */
+.suggestion__source {
+  margin: 0.4rem 0;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--line);
+  font-size: 0.85rem;
+  opacity: 0.85;
+  font-style: italic;
+}
+
+.suggestion__actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.badge--high   { border-color: #2e8b57; color: #2e8b57; opacity: 1; }
+.badge--medium { border-color: #c98a00; color: #c98a00; opacity: 1; }
+.badge--low    { border-color: var(--line); opacity: 0.7; }
+
+.inline-status--warn {
+  border-left-color: #c98a00;
+}
