@@ -63,3 +63,244 @@ body {
   max-width: 60rem;
   margin: 0 auto;
 }
+
+/* --------------------------------------------------------------------------
+   Input page (step 1). Colours are derived from currentColor and a single
+   accent so the page follows the light/dark preference declared by
+   color-scheme rather than hard-coding either theme.
+   -------------------------------------------------------------------------- */
+
+.input-page {
+  --line: rgba(128, 128, 128, 0.35);
+  --accent: #2f6feb;
+  max-width: 48rem;
+}
+
+.input-page__head {
+  margin-bottom: 2rem;
+}
+
+.input-page__step {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.input-page h1 {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.input-page__lede {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin: 0 0 1.5rem;
+  min-width: 0;
+}
+
+.card > legend {
+  padding: 0 0.5rem;
+  font-weight: 600;
+}
+
+.card[disabled] {
+  opacity: 0.6;
+}
+
+.field-label {
+  display: block;
+  margin: 1rem 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.input-page textarea,
+.input-page input[type='url'],
+.input-page select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.input-page textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.muted {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin: 0.4rem 0 0;
+}
+
+/* Buttons ---------------------------------------------------------------- */
+
+.input-page button,
+.button {
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.input-page button:hover:not(:disabled),
+.button:hover {
+  border-color: currentColor;
+}
+
+.input-page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.button--primary:disabled {
+  background: transparent;
+  color: inherit;
+}
+
+/* A button that reads as a link, for in-sentence actions. */
+.input-page button.link {
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.tab--active {
+  border-color: currentColor !important;
+  font-weight: 600;
+}
+
+/* Dropzone --------------------------------------------------------------- */
+
+.dropzone {
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.dropzone--active {
+  border-color: var(--accent);
+  background: rgba(47, 111, 235, 0.06);
+}
+
+.dropzone .button {
+  display: inline-block;
+}
+
+/* Notices ---------------------------------------------------------------- */
+
+.notice {
+  margin: 0.85rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 6px;
+  border-left: 3px solid var(--line);
+  background: rgba(128, 128, 128, 0.08);
+  font-size: 0.9rem;
+}
+
+.notice p {
+  margin: 0 0 0.4rem;
+}
+
+.notice p:last-child {
+  margin-bottom: 0;
+}
+
+.notice--ok {
+  border-left-color: #2e8b57;
+}
+
+.notice--warn {
+  border-left-color: #c98a00;
+}
+
+.notice--error {
+  border-left-color: #c0392b;
+}
+
+/* Stage progress --------------------------------------------------------- */
+
+.stages {
+  list-style: none;
+  margin: 1.25rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.stage {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.2rem 0;
+}
+
+.stage--pending {
+  opacity: 0.45;
+}
+
+.stage--active {
+  font-weight: 600;
+}
+
+.stage__marker {
+  width: 1rem;
+  text-align: center;
+}
+
+.stage--done .stage__marker {
+  color: #2e8b57;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.actions .muted {
+  margin: 0;
+}

@@ -530,6 +530,18 @@ const PROVIDERS = {
 
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDERS);
 
+/**
+ * provider id -> human-readable name, derived from the registry rather than
+ * retyped in the UI. A provider's display name is registry metadata; if the
+ * UI kept its own copy, adding a provider would mean editing two files and
+ * the second one would eventually be forgotten.
+ *
+ * @type {Record<string, string>}
+ */
+export const PROVIDER_LABELS = Object.fromEntries(
+  Object.entries(PROVIDERS).map(([id, spec]) => [id, spec.label || id])
+);
+
 // ---------------------------------------------------------------------------
 // Shared orchestration -- the only place control flow lives
 // ---------------------------------------------------------------------------

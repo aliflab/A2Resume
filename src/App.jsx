@@ -1,13 +1,15 @@
 import { NavLink, Outlet } from 'react-router';
 
+// The four wizard steps, then the side tools. Nothing here guards anything --
+// every page must survive being opened directly with empty state.
 const NAV = [
-  { to: '/app', label: 'Workspace' },
-  { to: '/analyze', label: 'Analyze' },
-  { to: '/tailor', label: 'Tailor' },
+  { to: '/input', label: '1. Input' },
+  { to: '/analyze', label: '2. Analyze' },
+  { to: '/tailor', label: '3. Tailor' },
+  { to: '/export', label: '4. Export' },
   { to: '/match', label: 'Match' },
   { to: '/cover-letter', label: 'Cover Letter' },
   { to: '/designer', label: 'Designer' },
-  { to: '/export', label: 'Export' },
   { to: '/settings', label: 'Settings' },
 ];
 

@@ -12,6 +12,7 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+import { MAX_FILE_SIZE, MAX_PAGES } from '../utils/uploadLimits.js';
 
 // The worker is imported as an *asset URL*, so Vite copies pdf.worker.min.mjs
 // into dist/ and rewrites this to a same-origin hashed path. Left to itself
@@ -29,13 +30,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 // ---------------------------------------------------------------------------
 
 /**
- * Largest file we will attempt. Resumes are small; anything past this is a
- * portfolio or a scan, and both cost more than they return.
+ * Size and page caps live in utils/uploadLimits.js and are re-exported here so
+ * this module's public API is unchanged. The upload UI needs the numbers to
+ * render its hint text, and importing this file to read one would pull pdf.js
+ * into the main bundle for every visitor.
  */
-export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
-
-/** Page ceiling. A resume that runs past this is not a resume. */
-export const MAX_PAGES = 30;
+export { MAX_FILE_SIZE, MAX_PAGES } from '../utils/uploadLimits.js';
 
 /** Below this many characters we assume the PDF is images, not text. */
 const SCANNED_TEXT_THRESHOLD = 100;

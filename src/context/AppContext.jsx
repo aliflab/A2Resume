@@ -3,36 +3,138 @@ import { createContext, useContext, useMemo, useReducer } from 'react';
 /**
  * The single global store for the app. useReducer + Context only --
  * do not introduce Redux, Zustand, or any other state library.
+ *
+ * EVERY PAGE MUST TOLERATE EMPTY STATE.
+ * There are no route guards, so any page can be loaded cold with nothing but
+ * `initialState` -- a bookmarked /analyze, a hard refresh mid-flow, a shared
+ * link. Guard every read. `null` for "not produced yet" is a normal value
+ * here, not an error condition.
  */
 export const initialState = {
+  /** Raw resume text, before parsing. Kept so a re-run needs no re-upload. */
+  resumeText: '',
+  /** Parsed resume object from parseResumeWithAI. Any key may be absent. */
   resume: null,
+
+  /** Raw job description text, however it was obtained. */
   jobDescription: '',
-  settings: {},
+  /** Parsed JD object from parseJobDescriptionWithAI. Any key may be absent. */
+  parsedJD: null,
+
+  /** Output of analyzeCompetencyGaps. */
+  gapAnalysis: null,
+  /** Output of calculateATSScore. */
+  atsScore: null,
+
+  /**
+   * Where each artefact came from, for display and for deciding whether a
+   * re-run is cheap. Not load-bearing -- nothing branches on it.
+   */
+  sources: {
+    resume: null, // 'pdf' | 'paste'
+    jobDescription: null, // 'url' | 'paste'
+    resumeFileName: null,
+    jobDescriptionUrl: null,
+    provider: null, // the provider that produced the current artefacts
+  },
+
+  settings: {
+    /** Provider chosen for the next run. Persisted choice lives in Settings. */
+    provider: null,
+  },
+
   ui: {
-    status: 'idle',
+    status: 'idle', // 'idle' | 'running' | 'done' | 'error'
+    /** Which pipeline step is in flight; null when not running. */
+    stage: null,
+    /** { message, code, kind, isAuth } -- never a raw Error object. */
+    error: null,
   },
 };
 
+/**
+ * The pipeline steps, in order. Exported so the progress indicator and the
+ * runner agree on the list rather than each keeping its own copy.
+ */
+export const PIPELINE_STAGES = [
+  { id: 'parseResume', label: 'Reading your resume' },
+  { id: 'parseJD', label: 'Reading the job description' },
+  { id: 'gapAnalysis', label: 'Comparing against the role' },
+  { id: 'atsScore', label: 'Scoring for ATS' },
+];
+
 export const ACTIONS = {
   RESET: 'reset',
+
+  SET_RESUME_TEXT: 'set_resume_text',
   SET_RESUME: 'set_resume',
   SET_JOB_DESCRIPTION: 'set_job_description',
+  SET_PARSED_JD: 'set_parsed_jd',
+  SET_GAP_ANALYSIS: 'set_gap_analysis',
+  SET_ATS_SCORE: 'set_ats_score',
+
+  SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
+
   SET_STATUS: 'set_status',
+  SET_STAGE: 'set_stage',
+  SET_ERROR: 'set_error',
+
+  /** Clear every pipeline artefact without touching settings. */
+  CLEAR_ANALYSIS: 'clear_analysis',
 };
 
 export function appReducer(state, action) {
   switch (action.type) {
     case ACTIONS.RESET:
       return initialState;
+
+    case ACTIONS.SET_RESUME_TEXT:
+      return { ...state, resumeText: action.payload };
     case ACTIONS.SET_RESUME:
       return { ...state, resume: action.payload };
     case ACTIONS.SET_JOB_DESCRIPTION:
       return { ...state, jobDescription: action.payload };
+    case ACTIONS.SET_PARSED_JD:
+      return { ...state, parsedJD: action.payload };
+    case ACTIONS.SET_GAP_ANALYSIS:
+      return { ...state, gapAnalysis: action.payload };
+    case ACTIONS.SET_ATS_SCORE:
+      return { ...state, atsScore: action.payload };
+
+    case ACTIONS.SET_SOURCES:
+      return { ...state, sources: { ...state.sources, ...action.payload } };
     case ACTIONS.SET_SETTINGS:
       return { ...state, settings: { ...state.settings, ...action.payload } };
+
     case ACTIONS.SET_STATUS:
       return { ...state, ui: { ...state.ui, status: action.payload } };
+    case ACTIONS.SET_STAGE:
+      return { ...state, ui: { ...state.ui, stage: action.payload } };
+
+    // An error always ends the run, so status and stage move with it rather
+    // than leaving a stale spinner behind for a caller to remember to clear.
+    case ACTIONS.SET_ERROR:
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          error: action.payload,
+          status: action.payload ? 'error' : state.ui.status,
+          stage: action.payload ? null : state.ui.stage,
+        },
+      };
+
+    case ACTIONS.CLEAR_ANALYSIS:
+      return {
+        ...state,
+        resume: null,
+        parsedJD: null,
+        gapAnalysis: null,
+        atsScore: null,
+        ui: { ...state.ui, status: 'idle', stage: null, error: null },
+      };
+
     default:
       return state;
   }
