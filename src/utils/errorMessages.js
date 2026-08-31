@@ -66,7 +66,7 @@ export function describeError(err, context = {}) {
   }
 
   if (name === 'AiError') {
-    return { ...describeAiError(err, provider), code, kind: 'ai', isAuth: AUTH_CODES.has(code) };
+    return describeAiFailure({ code, message: err.message, provider: provider ?? err.provider });
   }
 
   // Unknown throw. Say so plainly rather than dressing it up as something
@@ -77,6 +77,27 @@ export function describeError(err, context = {}) {
     kind: 'unknown',
     isAuth: false,
     retryable: true,
+  };
+}
+
+/**
+ * Describe an AI failure from its code alone.
+ *
+ * `testConnection` reports failure by *returning* `{ success: false, code,
+ * error }` rather than throwing, so there is no `AiError` to hand
+ * `describeError`. This is the same mapping by another door -- Settings and
+ * the pipeline must not drift into two different explanations of the same
+ * code.
+ *
+ * @param {{ code?: string, message?: string, provider?: string }} failure
+ * @returns {DescribedError}
+ */
+export function describeAiFailure({ code = 'unknown', message = '', provider } = {}) {
+  return {
+    ...describeAiError({ code, message, provider }, provider),
+    code,
+    kind: 'ai',
+    isAuth: AUTH_CODES.has(code),
   };
 }
 

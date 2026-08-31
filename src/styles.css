@@ -70,9 +70,13 @@ body {
    color-scheme rather than hard-coding either theme.
    -------------------------------------------------------------------------- */
 
-.input-page {
+.page {
   --line: rgba(128, 128, 128, 0.35);
   --accent: #2f6feb;
+}
+
+.input-page,
+.settings {
   max-width: 48rem;
 }
 
@@ -121,9 +125,10 @@ body {
   font-weight: 600;
 }
 
-.input-page textarea,
-.input-page input[type='url'],
-.input-page select {
+.page textarea,
+.page input[type='url'],
+.page input[type='password'],
+.page select {
   width: 100%;
   box-sizing: border-box;
   padding: 0.5rem 0.6rem;
@@ -134,7 +139,7 @@ body {
   font: inherit;
 }
 
-.input-page textarea {
+.page textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   resize: vertical;
@@ -159,7 +164,7 @@ body {
 
 /* Buttons ---------------------------------------------------------------- */
 
-.input-page button,
+.page button,
 .button {
   padding: 0.45rem 0.9rem;
   border: 1px solid var(--line);
@@ -170,12 +175,12 @@ body {
   cursor: pointer;
 }
 
-.input-page button:hover:not(:disabled),
+.page button:hover:not(:disabled),
 .button:hover {
   border-color: currentColor;
 }
 
-.input-page button:disabled {
+.page button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -192,7 +197,7 @@ body {
 }
 
 /* A button that reads as a link, for in-sentence actions. */
-.input-page button.link {
+.page button.link {
   border: none;
   padding: 0;
   color: var(--accent);
@@ -303,4 +308,117 @@ body {
 
 .actions .muted {
   margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Settings -> API keys. Reuses .card, .row, .notice and the .page form rules
+   above; only the provider list is new.
+   -------------------------------------------------------------------------- */
+
+.settings__head h1 {
+  margin: 0 0 1.5rem;
+}
+
+.settings__section > h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+/* The no-backend explanation. Stated plainly and up front -- it is the reason
+   the app works this way, not a footnote. */
+.notice--info {
+  border-left-color: var(--accent);
+}
+
+.byok p {
+  margin: 0 0 0.6rem;
+}
+
+.byok p:last-child {
+  margin-bottom: 0;
+}
+
+.providers {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.provider {
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.provider:first-child {
+  border-top: none;
+}
+
+.provider__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.provider__name {
+  font-weight: 600;
+}
+
+.provider__input {
+  flex: 1;
+  min-width: 0;
+  /* A key is a long opaque string; monospace makes a stray space visible. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.badge {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  opacity: 0.65;
+}
+
+.badge--on {
+  border-color: #2e8b57;
+  color: #2e8b57;
+  opacity: 1;
+}
+
+/* Inline and persistent: which providers actually work has to stay readable,
+   so these do not fade the way a toast would. */
+.provider__status:empty {
+  display: none;
+}
+
+.inline-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  padding-left: 0.6rem;
+  border-left: 3px solid var(--line);
+}
+
+.inline-status--ok {
+  border-left-color: #2e8b57;
+}
+
+.inline-status--error {
+  border-left-color: #c0392b;
+}
+
+.inline-status .muted {
+  display: inline;
+  margin: 0;
+}
+
+@media (max-width: 40rem) {
+  .provider .row {
+    flex-wrap: wrap;
+  }
+
+  .provider__input {
+    flex-basis: 100%;
+  }
 }
