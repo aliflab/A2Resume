@@ -6,6 +6,7 @@
  */
 
 import { callStructured, DEFAULT_TIMEOUT_MS } from './aiService.js';
+import { buildExclusionPromptSection } from '../utils/jdKeywordExclusions.js';
 
 export const JD_SCHEMA = {
   type: 'object',
@@ -47,6 +48,11 @@ REQUIRED VERSUS PREFERRED
 - preferredSkills: skills the posting frames as optional, for example "Nice to have", "Preferred", "Bonus", "a plus", "desirable".
 - A skill belongs in exactly one of the two lists, never both.
 - If the posting does not distinguish, place the skill in requiredSkills.
+- Both lists are SKILLS. The same exclusions listed under ATS KEYWORDS below apply here in
+  full: never place an employer benefit, perk, wellbeing or rewards program, culture or
+  values phrase, or a generic personality trait in either list. A posting that says it wants
+  "a positive attitude and a willingness to learn" is stating a preference about a person,
+  not naming a skill -- omit it. If that leaves a list empty, an empty array is correct.
 
 ATS KEYWORDS
 atsKeywords is not a digest of the posting. It is the set of terms a candidate could plausibly
@@ -63,20 +69,7 @@ ADMIT only terms of these kinds:
   (customer service, teamwork, communication, time management, attention to detail).
 
 EXCLUDE ENTIRELY, from all three buckets:
-- Employer benefits and perks: salary, bonuses, staff discounts, health insurance, paid parental
-  leave, leave entitlements, superannuation, retirement plans, wellbeing or fitness programs,
-  employee assistance programs, physiotherapy, free parking, meals, travel allowances.
-- Named internal programs and branded schemes the employer offers -- wellbeing, rewards, discount
-  or recognition programs carrying a company or product name. These are things the employer gives,
-  never things a candidate holds.
-- Culture, values, and "why work here" language: diversity, inclusion, inclusive environment,
-  belonging, supportive team, fast-paced environment, great culture, work-life balance.
-- Generic personality traits, however the posting phrases them: a positive attitude, a willingness
-  to learn, a can-do attitude, enthusiasm, passion, drive, motivation, being a team player.
-  These are claims anyone can make without evidence. Note the contrast with the compact competency
-  nouns admitted above: "teamwork" is a skill a resume lists; "a positive attitude" is not.
-- Company description, mission statements, awards, employee counts, office locations.
-- Application logistics: how to apply, closing dates, interview stages, right-to-work statements.
+${buildExclusionPromptSection()}
 
 THE TEST
 Before admitting a keyword, ask: could a candidate write this on their resume as something they

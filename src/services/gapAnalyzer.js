@@ -20,6 +20,7 @@
  */
 
 import { SKILL_SYNONYM_GROUPS, getSynonyms, canonicalise, normaliseSkill } from '../utils/skillSynonyms.js';
+import { isExcludedKeyword } from '../utils/jdKeywordExclusions.js';
 
 // ---------------------------------------------------------------------------
 // Type guards -- every field from a parsed object goes through one of these
@@ -328,10 +329,26 @@ export function collectJDKeywords(parsedJD) {
   /** @type {Map<string, { keyword: string, priority: string, source: string }>} */
   const byNormalised = new Map();
 
-  const add = (term, priority, source, { keywordShapedOnly = false } = {}) => {
+  const add = (term, priority, source, { fallback = false } = {}) => {
     const keyword = asString(term).trim();
     if (!keyword) return;
-    if (keywordShapedOnly && !isKeywordShaped(keyword)) return;
+
+    // Fallback-only guards. `atsKeywords` is exempt from both: it is the
+    // authority path, its entries are deliberate phrases, and for some
+    // postings the excluded vocabulary IS the domain -- "health insurance"
+    // for a claims role, "physiotherapy" for a clinic. See the note in
+    // jdKeywordExclusions.js on why the asymmetry is the point.
+    if (fallback) {
+      if (!isKeywordShaped(keyword)) return;
+
+      // Backstop for the prompt-level rule. The JD prompt asks the model to
+      // keep benefits, perks, culture language and personality traits out of
+      // these lists, but that is an instruction, not a guarantee -- it can
+      // fail on unfamiliar phrasing or a weaker provider. Admitting one here
+      // is expensive: requiredSkills enters at `high` priority, so a perk
+      // becomes an unwinnable high-weight gap.
+      if (isExcludedKeyword(keyword)) return;
+    }
 
     const key = normaliseSkill(keyword);
     if (!key) return;
@@ -347,8 +364,8 @@ export function collectJDKeywords(parsedJD) {
   asArray(ats.medium).forEach((t) => add(t, 'medium', 'atsKeywords'));
   asArray(ats.low).forEach((t) => add(t, 'low', 'atsKeywords'));
 
-  asArray(jd.requiredSkills).forEach((t) => add(t, 'high', 'requiredSkills', { keywordShapedOnly: true }));
-  asArray(jd.preferredSkills).forEach((t) => add(t, 'low', 'preferredSkills', { keywordShapedOnly: true }));
+  asArray(jd.requiredSkills).forEach((t) => add(t, 'high', 'requiredSkills', { fallback: true }));
+  asArray(jd.preferredSkills).forEach((t) => add(t, 'low', 'preferredSkills', { fallback: true }));
 
   return [...byNormalised.values()];
 }
