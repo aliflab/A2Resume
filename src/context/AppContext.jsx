@@ -27,6 +27,17 @@ export const initialState = {
   atsScore: null,
 
   /**
+   * Output of tailorResumeWithAI, after mergeNonDestructiveResume has run.
+   * Kept separate from `resume` on purpose: the original parse stays intact so
+   * a tailoring pass can be reviewed, rejected, or re-run without re-uploading.
+   */
+  tailoredResume: null,
+  /** The model's before/after log for the tailoring pass. */
+  changesLog: null,
+  /** What the merge safety net had to correct in the model's output. */
+  tailorCorrections: null,
+
+  /**
    * Where each artefact came from, for display and for deciding whether a
    * re-run is cheap. Not load-bearing -- nothing branches on it.
    */
@@ -72,6 +83,8 @@ export const ACTIONS = {
   SET_PARSED_JD: 'set_parsed_jd',
   SET_GAP_ANALYSIS: 'set_gap_analysis',
   SET_ATS_SCORE: 'set_ats_score',
+  SET_TAILORED_RESUME: 'set_tailored_resume',
+  CLEAR_TAILORING: 'clear_tailoring',
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
@@ -111,6 +124,24 @@ export function appReducer(state, action) {
       return { ...state, gapAnalysis: action.payload };
     case ACTIONS.SET_ATS_SCORE:
       return { ...state, atsScore: action.payload };
+
+    // One dispatch for the whole tailoring result. The resume, the log of what
+    // changed, and what the merge had to correct are produced together and are
+    // only meaningful together -- splitting them across three actions would
+    // allow a render between them showing a tailored resume with no changelog.
+    case ACTIONS.SET_TAILORED_RESUME: {
+      const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      return {
+        ...state,
+        tailoredResume: payload.resume ?? null,
+        changesLog: Array.isArray(payload.changesLog) ? payload.changesLog : [],
+        tailorCorrections: Array.isArray(payload.corrections) ? payload.corrections : [],
+      };
+    }
+
+    // Discard a tailoring pass without touching the analysis behind it.
+    case ACTIONS.CLEAR_TAILORING:
+      return { ...state, tailoredResume: null, changesLog: null, tailorCorrections: null };
 
     case ACTIONS.SET_SOURCES:
       return { ...state, sources: { ...state.sources, ...action.payload } };
@@ -177,6 +208,11 @@ export function appReducer(state, action) {
         parsedJD: null,
         gapAnalysis: null,
         atsScore: null,
+        // Tailoring is derived from the analysis; leaving it behind would show
+        // a tailored resume built from artefacts that no longer exist.
+        tailoredResume: null,
+        changesLog: null,
+        tailorCorrections: null,
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
