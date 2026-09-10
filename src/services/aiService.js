@@ -19,6 +19,23 @@ export const TEST_TIMEOUT_MS = 8_000;
 
 /** Attempts per model on HTTP 429, including the first. */
 const MAX_ATTEMPTS_429 = 3;
+
+/**
+ * Statuses that mean "this model is temporarily out of capacity" rather than
+ * "something is broken". These fall through to the next model in the ordered
+ * list, exactly as a 404 does; every other 5xx still surfaces immediately, so a
+ * real server-side bug is never papered over by silently trying four more
+ * models.
+ *
+ * Only status codes are used to make the distinction, because the providers
+ * agree on them and the bodies are free text:
+ *   503 -- Gemini ("model is currently experiencing high demand"), and the
+ *          OpenAI-shaped providers (OpenAI, DeepSeek, Kimi) for server overload.
+ *   529 -- Anthropic's documented `overloaded_error`. Anthropic does not use
+ *          503 for this, and its 500 is `api_error` (a service fault or bug),
+ *          which is exactly what must keep surfacing.
+ */
+const OVERLOADED_STATUSES = new Set([503, 529]);
 const BACKOFF_BASE_MS = 600;
 const BACKOFF_MAX_MS = 8_000;
 
@@ -574,6 +591,18 @@ async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs 
 
       const detail = spec.errorMessage(body, rawText);
 
+      // Capacity fallback: this model is up but full, so try the next one
+      // rather than failing the whole call. Bounded by the ordered list --
+      // one request per model, and no extra attempts against this one.
+      if (OVERLOADED_STATUSES.has(status)) {
+        lastError = new AiError(
+          'server',
+          `${spec.label} is overloaded (${status}). Try again shortly.`,
+          { ...ctx, status }
+        );
+        break; // next model
+      }
+
       // Model-level fallback: checked before the 400 rule, since some
       // providers report an unknown model as a 400.
       if (spec.isModelNotFound(status, body)) {
@@ -612,6 +641,8 @@ async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs 
         break; // next model
       }
 
+      // Every remaining 5xx (500, 502, 504, ...) is a fault rather than a
+      // capacity limit, so it surfaces immediately instead of falling through.
       if (status >= 500) {
         throw new AiError('server', `${spec.label} server error (${status}). Try again shortly.`, {
           ...ctx,
