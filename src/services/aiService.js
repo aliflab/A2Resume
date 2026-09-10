@@ -361,7 +361,11 @@ const PROVIDERS = {
     buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
       const structured = this.structuredMode({ schema, systemPrompt });
       const generationConfig = { ...structured.body.generationConfig };
-      if (maxOutputTokens) generationConfig.maxOutputTokens = maxOutputTokens;
+      // Thinking is on by default on Gemini 3 models and its tokens are drawn
+      // from maxOutputTokens, so a small ceiling is spent entirely on thoughts
+      // and the answer comes back truncated as finishReason MAX_TOKENS. Floor
+      // it, exactly as the Claude entry does for the same reason.
+      if (maxOutputTokens) generationConfig.maxOutputTokens = Math.max(maxOutputTokens, 1024);
 
       const body = {
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
