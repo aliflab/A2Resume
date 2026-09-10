@@ -6,6 +6,10 @@
  */
 
 import { callStructured, DEFAULT_TIMEOUT_MS } from './aiService.js';
+import {
+  buildTranscriptionPromptSection,
+  checkTranscriptionFidelity,
+} from '../utils/transcriptionFidelity.js';
 
 /** Inlined rather than shared via $ref -- not every provider resolves refs. */
 const linkArray = {
@@ -126,6 +130,8 @@ TRANSCRIBE, DO NOT COMPOSE
 - Do not rephrase, tighten, expand, translate, or "improve" any text.
 - Do not fix spelling, grammar, or formatting errors. Transcribe them as they appear.
 
+${buildTranscriptionPromptSection()}
+
 NEVER INVENT
 - Never invent or infer a date, company, job title, employer, degree, institution, certification, skill, or url.
 - Never complete a partial value or supply a plausible-looking placeholder.
@@ -151,14 +157,18 @@ Return only the json object. No prose, no commentary, no code fences.`;
  * @param {string} options.apiKey
  * @param {string} [options.model] Pin one model, skipping the fallback list.
  * @param {number} [options.timeoutMs]
- * @returns {Promise<{ data: object, provider: string, model: string, salvaged: boolean }>}
+ * @returns {Promise<{ data: object, provider: string, model: string, salvaged: boolean,
+ *   fidelityWarnings: { path: string, text: string, unsupportedWords: string[] }[] }>}
+ *   `fidelityWarnings` is non-empty when a copied field contains words that
+ *   never appear in `rawText` -- see utils/transcriptionFidelity.js. Treat it
+ *   like `salvaged`: a signal the prompt did not hold, not something to ignore.
  */
 export async function parseResumeWithAI(rawText, { provider, apiKey, model, timeoutMs } = {}) {
   if (typeof rawText !== 'string' || rawText.trim() === '') {
     throw new Error('parseResumeWithAI: rawText is empty.');
   }
 
-  return callStructured({
+  const result = await callStructured({
     provider,
     apiKey,
     model,
@@ -171,4 +181,12 @@ ${rawText}
     schema: RESUME_SCHEMA,
     timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
   });
+
+  // Backstop for the prompt rule above. A diagnostic sibling of `data`, like
+  // `fenced` and `salvaged` -- deliberately NOT merged into `data`, which must
+  // stay exactly the schema's shape: `collectResumeText` reads named keys and
+  // would be unaffected, but the manual test's `collectStrings` walks every
+  // value, and warning text quoting a bullet would make that bullet look
+  // captured when it was not.
+  return { ...result, fidelityWarnings: checkTranscriptionFidelity(rawText, result.data) };
 }

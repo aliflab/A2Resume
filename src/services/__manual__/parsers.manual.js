@@ -13,6 +13,12 @@ import { parseResumeWithAI } from '../resumeParser.js';
 import { parseJobDescriptionWithAI } from '../jdParser.js';
 import { SUPPORTED_PROVIDERS } from '../aiService.js';
 import { getApiKeys } from '../apiKeyService.js';
+import {
+  checkTranscriptionFidelity,
+  describeFidelityWarning,
+  findUnsupportedWords,
+  buildSourceIndex,
+} from '../../utils/transcriptionFidelity.js';
 
 // ---------------------------------------------------------------------------
 // Samples -- short but deliberately awkward: a typo, an ongoing role, an
@@ -151,10 +157,101 @@ function report(label, sourceText, result) {
   console.log('urls captured   :', fidelity.urls, fidelity.missingUrls.length ? fidelity.missingUrls : '');
   console.log('bullets captured:', fidelity.bullets, fidelity.missingBullets.length ? fidelity.missingBullets : '');
   if (fidelity.inventedYears.length) console.error('INVENTED YEARS :', fidelity.inventedYears);
+
+  // Word-level substitution inside a populated field -- the failure the three
+  // checks above cannot see. `result.fidelityWarnings` is computed by the
+  // parser itself; recomputed here when absent so this also works on a jd row.
+  const warnings = result.fidelityWarnings ?? checkTranscriptionFidelity(sourceText, data);
+  if (warnings.length) {
+    console.error(`ALTERED CONTENT: ${warnings.length} field(s) contain words absent from the source`);
+    warnings.forEach((w) => {
+      console.error('  ' + describeFidelityWarning(w));
+      console.error('    got:', w.text);
+    });
+  } else {
+    console.log('altered content :  none detected');
+  }
+
   console.log(data);
   console.groupEnd();
 
-  return { provider, model, fenced, salvaged, ...fidelity };
+  return { provider, model, fenced, salvaged, ...fidelity, alteredFields: warnings.length };
+}
+
+// ---------------------------------------------------------------------------
+// Offline assertions for the substitution check
+//
+// No provider, no key, no network -- transcriptionFidelity.js is pure. These
+// exist because a safety net that has never been tested against its own worst
+// case is not a safety net. Add a case here before changing the checker.
+// ---------------------------------------------------------------------------
+
+const CASES = [
+  // The production failure this was written for.
+  ['catches the observed substitution',
+    'Work experience in the logistic and customer service industry.',
+    'Work experience in the logistic and retail industry.', ['retail']],
+  // Must stay silent on a faithful copy, or it trains people to ignore it.
+  ['silent on a verbatim copy',
+    'Work experience in the logistic and customer service industry.',
+    'Work experience in the logistic and customer service industry.', []],
+  ['silent on a case change',
+    'Backend engineer with 6 years building payment infrastructure.',
+    'BACKEND ENGINEER WITH 6 YEARS BUILDING PAYMENT INFRASTRUCTURE.', []],
+  ['silent on singular/plural reflow',
+    'Work in the customer service industry.',
+    'Work in customer service industries.', []],
+  // A "corrected" typo is an alteration -- the prompt forbids fixing spelling.
+  ['catches a silently corrected typo',
+    'Focused on reliabilty and observability.',
+    'Focused on reliability and observability.', ['reliability']],
+  // Synonym swap: the subtlest form, and the one a reader skims past.
+  ['catches a synonym swap',
+    'Assisted the finance team with month-end reconciliation.',
+    'Supported the finance team with month-end reconciliation.', ['supported']],
+  ['catches an altered metric',
+    'Reduced p99 latency from 1.8s to 340ms.',
+    'Reduced p99 latency from 1.8s to 240ms.', ['240ms']],
+  ['catches a swapped technology',
+    'Built event-driven services in Go.',
+    'Built event-driven services in Java.', ['java']],
+  ['leaves C++ / C# / Node.js intact',
+    'Built services in Go, C++, C# and Node.js.',
+    'Built services in Go, C++, C# and Node.js.', []],
+];
+
+/** @returns {boolean} true when every case passes */
+export function testFidelityOffline() {
+  let failed = 0;
+  console.group('transcriptionFidelity - offline assertions');
+
+  for (const [label, source, produced, expected] of CASES) {
+    const got = findUnsupportedWords(produced, buildSourceIndex(source));
+    const pass = JSON.stringify(got) === JSON.stringify(expected);
+    if (pass) console.log('PASS', label);
+    else {
+      failed += 1;
+      console.error('FAIL', label, '- got', got, 'expected', expected);
+    }
+  }
+
+  // Malformed parses must degrade, never throw -- same contract as the
+  // analysis services.
+  const malformed = [null, undefined, 'string', 42, [], {}, { summary: null },
+    { summary: 42 }, { experience: 'nope' }, { experience: [null] },
+    { experience: [{ bullets: 'nope' }] }, { projects: [{ bullets: [null, 42] }] },
+    { education: [{ details: {} }] }, { summary: '' }];
+  try {
+    malformed.forEach((shape) => checkTranscriptionFidelity('some source text', shape));
+    console.log('PASS no throw on malformed parses');
+  } catch (err) {
+    failed += 1;
+    console.error('FAIL malformed parse threw', err);
+  }
+
+  console.log(failed ? `${failed} FAILED` : 'all passed');
+  console.groupEnd();
+  return failed === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,4 +304,4 @@ export async function runAll(keys) {
   return rows;
 }
 
-export default { runAll, testParsers, SAMPLE_RESUME, SAMPLE_JD };
+export default { runAll, testParsers, testFidelityOffline, SAMPLE_RESUME, SAMPLE_JD };
