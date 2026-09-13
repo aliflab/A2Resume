@@ -5,11 +5,40 @@
  * summarises a resume -- that belongs to the tailoring services, later.
  */
 
-import { callStructured, DEFAULT_TIMEOUT_MS } from './aiService.js';
+import { callStructured } from './aiService.js';
 import {
   buildTranscriptionPromptSection,
   checkTranscriptionFidelity,
 } from '../utils/transcriptionFidelity.js';
+
+/**
+ * Resume parsing gets its own timeout rather than the shared 20s default,
+ * scoped here the same way `TAILOR_TIMEOUT_MS` is scoped to resumeTailor.js.
+ *
+ * The shared default is sized for short calls -- `testConnection`, and the
+ * small structured requests that return in a second or two. A full-length
+ * resume is a different kind of call: the whole document goes in, every bullet
+ * and url has to come back out, and on Gemini 3 the thinking budget is spent
+ * before the transcription even starts. Against a real two-role resume, the
+ * shared 20s default failed 3/3 with "did not respond in time" -- a timeout
+ * that reads as a provider fault but is really a budget set for a different
+ * kind of call.
+ *
+ * Measured 2026-09-13 on that same resume, 3 runs each with no ceiling:
+ *   gemini  25.2s, 6.4s, 43.4s
+ *   claude  16.7s, 9.1s, 6.9s
+ * The repo's shorter SAMPLE_RESUME ran 3.6-5.4s on gemini and 7.9-12.9s on
+ * claude, so it is not a useful stand-in for sizing this. 90s is 2x the slowest
+ * real run, rounded up. Note gemini's 43.4s run included a 503 fallthrough to
+ * the next model, and even claude's 16.7s sits close to the old 20s limit --
+ * this is not a Gemini-only problem.
+ *
+ * The timeout applies per request, not per call: `runWithFallback` gives each
+ * model attempt a fresh timer. A fallthrough therefore never eats into the
+ * next model's budget, but the worst-case wall time for one parse grows with
+ * the model list.
+ */
+export const RESUME_PARSE_TIMEOUT_MS = 90_000;
 
 /** Inlined rather than shared via $ref -- not every provider resolves refs. */
 const linkArray = {
@@ -179,7 +208,7 @@ export async function parseResumeWithAI(rawText, { provider, apiKey, model, time
 ${rawText}
 --- END RESUME ---`,
     schema: RESUME_SCHEMA,
-    timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    timeoutMs: timeoutMs ?? RESUME_PARSE_TIMEOUT_MS,
   });
 
   // Backstop for the prompt rule above. A diagnostic sibling of `data`, like
