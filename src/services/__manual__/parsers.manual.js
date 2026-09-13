@@ -218,6 +218,22 @@ const CASES = [
   ['leaves C++ / C# / Node.js intact',
     'Built services in Go, C++, C# and Node.js.',
     'Built services in Go, C++, C# and Node.js.', []],
+  // Welded source text, observed on a real flattened resume. The parser copied
+  // or split these faithfully; the checker must not blame it for the weld.
+  ['silent on a sentence welded to a heading across "."',
+    'make decisions independently andquickly.Job Experience',
+    'make decisions independently andquickly.', []],
+  ['silent on a bullet welded to a heading by case',
+    'Website maintained with WordPress technologyAcademic Background',
+    'Website maintained with WordPress technology', []],
+  // The seam split must not become a substring match.
+  ['still catches a swap next to a welded seam',
+    'Built services in JavaScript.Education',
+    'Built services in Java.', ['java']],
+  // Known limitation: a weld with no case seam is not recoverable.
+  ['flags a model splitting a caseless weld (accepted limitation)',
+    'work in the logistic and customerservice industry',
+    'work in the logistic and customer service industry', ['customer', 'service']],
 ];
 
 /** @returns {boolean} true when every case passes */

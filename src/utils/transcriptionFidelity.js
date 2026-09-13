@@ -116,12 +116,39 @@ function inflections(token) {
 /**
  * Every content word the source text contains, in every form the fold accepts.
  *
+ * Pasted and extracted text often loses the whitespace between a sentence or
+ * heading and the next one. Observed on a real resume: "independently
+ * andquickly.Job Experience" tokenised to `andquickly.job` (the tokeniser keeps
+ * "." so Node.js survives), and "WordPress technologyAcademic Background" to
+ * `technologyacademic`. The parser then copied "andquickly." and split
+ * "technology" off the heading -- both faithful -- and both were flagged.
+ *
+ * So the source is ALSO indexed with two kinds of weld split apart, read in the
+ * original case before tokenising lowercases the seam away:
+ *   - a "." directly followed by a capital ("quickly.Job"). "Node.js" and
+ *     "1.8s" have no capital after the dot and are untouched.
+ *   - a lowercase-to-uppercase seam in a run that STARTS lowercase
+ *     ("technologyAcademic"). A run starting uppercase is left whole, because
+ *     that is what a camel-cased name looks like: splitting "JavaScript" would
+ *     index "java" and let a Go-to-Java swap through.
+ * This only ever adds words that literally occur in the source, and only on the
+ * source side. The cost is small: a lowercase-led name like "jQuery" also
+ * indexes "query".
+ *
+ * A weld with no case change ("customerservice") is not recoverable without a
+ * dictionary and stays a known false-positive source if a model splits it.
+ * Deliberately NOT a substring match, for the same JavaScript/Java reason.
+ *
  * @param {unknown} sourceText
  * @returns {Set<string>}
  */
 export function buildSourceIndex(sourceText) {
   const index = new Set();
-  for (const token of tokeniseContent(sourceText)) {
+  if (typeof sourceText !== 'string') return index;
+  const seamSplit = sourceText
+    .replace(/([a-z])\.([A-Z])/g, '$1. $2')
+    .replace(/\b([a-z]+)([A-Z])/g, '$1 $2');
+  for (const token of [...tokeniseContent(sourceText), ...tokeniseContent(seamSplit)]) {
     for (const form of inflections(token)) index.add(form);
   }
   return index;
