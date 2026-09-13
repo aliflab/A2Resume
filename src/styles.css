@@ -54,6 +54,42 @@ body {
   font-weight: 600;
 }
 
+/* Start over + save status. The header sits outside .page, so the tokens the
+   shared .button rule reads are declared here too. */
+.shell__header {
+  flex-wrap: wrap;
+}
+
+.shell__session {
+  --line: rgba(128, 128, 128, 0.35);
+  --accent: #2f6feb;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+.shell__session .button {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.shell__session .button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.button--danger {
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+.shell__session-warn {
+  color: #c0392b;
+}
+
 .shell__main {
   flex: 1;
   padding: 2rem 1.5rem;

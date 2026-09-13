@@ -1,4 +1,6 @@
-import { createContext, useContext, useMemo, useReducer } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
+
+import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
 
 /**
  * The single global store for the app. useReducer + Context only --
@@ -6,9 +8,11 @@ import { createContext, useContext, useMemo, useReducer } from 'react';
  *
  * EVERY PAGE MUST TOLERATE EMPTY STATE.
  * There are no route guards, so any page can be loaded cold with nothing but
- * `initialState` -- a bookmarked /analyze, a hard refresh mid-flow, a shared
- * link. Guard every read. `null` for "not produced yet" is a normal value
- * here, not an error condition.
+ * `initialState` -- a bookmarked /analyze, a first visit, a session that was
+ * cleared, or stored data that was missing or corrupt. The pipeline slice is
+ * persisted (sessionPersistence.js) so a reload usually restores it, but
+ * "usually" is not a guarantee: guard every read. `null` for "not produced
+ * yet" is a normal value here, not an error condition.
  */
 export const initialState = {
   /** Raw resume text, before parsing. Kept so a re-run needs no re-upload. */
@@ -130,6 +134,11 @@ export function appReducer(state, action) {
     // only meaningful together -- splitting them across three actions would
     // allow a render between them showing a tailored resume with no changelog.
     case ACTIONS.SET_TAILORED_RESUME: {
+      // A tailoring pass is derived from the resume. One that finishes after
+      // "Start over" wiped the resume would otherwise land in an empty store,
+      // be persisted, and resurface on Export as a resume with no source.
+      // Tailor's busy flag is page-local, so the reset cannot see it to wait.
+      if (!state.resume) return state;
       const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
       return {
         ...state,
@@ -223,9 +232,78 @@ export function appReducer(state, action) {
 
 const AppContext = createContext(null);
 
+/**
+ * Lazy initialiser: hydrate from the stored session before the first render.
+ *
+ * It has to happen here, not in an effect. Pages seed their local form state
+ * from the store once, on mount (InputPage's textareas do exactly this), so a
+ * store that fills in one render later would leave them empty.
+ *
+ * `ui` always starts from `initialState` -- see sessionPersistence.js.
+ */
+function hydrate(base) {
+  const { state: restored } = loadSession();
+  if (!restored) return base;
+  return {
+    ...base,
+    ...restored,
+    sources: { ...base.sources, ...(restored.sources ?? {}) },
+    settings: { ...base.settings, ...(restored.settings ?? {}) },
+    ui: base.ui,
+  };
+}
+
 export function AppProvider({ children }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const [state, dispatch] = useReducer(appReducer, initialState, hydrate);
+
+  const {
+    resumeText,
+    resume,
+    jobDescription,
+    parsedJD,
+    gapAnalysis,
+    atsScore,
+    tailoredResume,
+    changesLog,
+    tailorCorrections,
+    sources,
+    settings,
+  } = state;
+
+  // Persist after every change to the pipeline slice -- each completed stage,
+  // a tailoring result, merged skills, a reset. `ui` is deliberately not a
+  // dependency, so stage ticks and spinners never trigger a write. Batched
+  // dispatches (the re-score's two) commit as one render and one write.
+  useEffect(() => {
+    saveSession({
+      resumeText,
+      resume,
+      jobDescription,
+      parsedJD,
+      gapAnalysis,
+      atsScore,
+      tailoredResume,
+      changesLog,
+      tailorCorrections,
+      sources,
+      settings,
+    });
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, tailoredResume, changesLog, tailorCorrections, sources, settings]);
+
+  // Dev-only read handle for __manual__/session.manual.js, which has to compare
+  // the live store against storage across a reload. Stripped from production
+  // builds by the import.meta.env.DEV check.
+  useEffect(() => {
+    if (import.meta.env.DEV) window.a2resumeDev = { getState: () => state };
+  }, [state]);
+
+  /** "Start over": delete the stored session, then empty the store. API keys are untouched. */
+  const resetSession = useCallback(() => {
+    clearSession();
+    dispatch({ type: ACTIONS.RESET });
+  }, []);
+
+  const value = useMemo(() => ({ state, dispatch, resetSession }), [state, resetSession]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
