@@ -10,6 +10,7 @@
     "lint": "oxlint"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.9.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

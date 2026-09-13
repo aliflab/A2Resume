@@ -802,3 +802,50 @@ body {
   margin: 0.3rem 0 0;
   font-size: 0.85rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Export (step 4). Reuses .card, .notice, .actions, .inline-status and the
+   .page textarea rule.
+   --------------------------------------------------------------------------- */
+
+.export {
+  max-width: 56rem;
+}
+
+.export__head {
+  margin-bottom: 1.5rem;
+}
+
+.export__head h1 {
+  margin: 0.25rem 0 0.4rem;
+}
+
+.export__step {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.export .notice {
+  margin: 0 0 1.5rem;
+}
+
+/* PDFDownloadLink renders an <a>; make it look like the other buttons. */
+a.button {
+  display: inline-block;
+  text-decoration: none;
+}
+
+/* The preview is the point of the page, so it gets real height. */
+.export__preview {
+  display: block;
+  width: 100%;
+  height: 80vh;
+  min-height: 32rem;
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-sizing: border-box;
+}

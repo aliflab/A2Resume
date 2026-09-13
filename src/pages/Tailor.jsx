@@ -112,7 +112,10 @@ export default function Tailor() {
                 ? 'The model reported no changes.'
                 : `${changesLog.length} change${changesLog.length === 1 ? '' : 's'} reported.`}
             </p>
-            <p>
+            <p className="actions">
+              <Link to="/export" className="button button--primary">
+                Continue to export
+              </Link>
               <button type="button" className="button" onClick={discard}>
                 Discard and start over
               </button>
