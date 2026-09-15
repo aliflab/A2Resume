@@ -40,6 +40,24 @@ export const CRITERION_WEIGHTS = {
   contactParsability: 10,
 };
 
+/**
+ * User-facing names, keyed by criterion id. Analyze reads these by id rather
+ * than trusting `breakdown[].label`, so a score restored from a session saved
+ * by an older build still shows the current name.
+ *
+ * `sectionHierarchy` keeps its id but not its old label ("Standard section
+ * hierarchy"): order is not measured, so "hierarchy" promised something the
+ * criterion cannot check. See scoreSectionHierarchy.
+ */
+export const CRITERION_LABELS = {
+  keywordDensity: 'Keyword density match',
+  topThirdPlacement: 'Top-third keyword placement',
+  sectionHierarchy: 'Standard sections present and filled',
+  bulletQuality: 'XYZ-formula bullet quality',
+  skillBreadth: 'Technical skill breadth',
+  contactParsability: 'Contact info parsability',
+};
+
 export const MAX_SCORE = Object.values(CRITERION_WEIGHTS).reduce((a, b) => a + b, 0);
 
 if (MAX_SCORE !== 100) {
@@ -189,7 +207,8 @@ function scoreTopThirdPlacement(parsedResume, gap) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Standard section hierarchy -- 15
+// 3. Standard sections present and filled -- 15
+//    (id stays `sectionHierarchy`: stored sessions and recommendations key on it)
 // ---------------------------------------------------------------------------
 
 /**
@@ -237,7 +256,10 @@ function scoreSectionHierarchy(parsedResume) {
     if (fraction === 0) missing.push(name);
   }
 
-  const notes = ['Section ORDER is not measured -- it is not recoverable from the parsed object. Presence and substance only.'];
+  const notes = [
+    'Checks that summary, experience, skills and education each exist and are not empty. Experience earns partial credit when some roles have no bullets.',
+    'The order of your sections is not measured: reading the resume loses where each section sat on the page.',
+  ];
   if (experience.length > 0 && withBullets.length < experience.length) {
     notes.push(`${experience.length - withBullets.length} of ${experience.length} experience entries have no bullets.`);
   }
@@ -678,12 +700,12 @@ export function calculateATSScore(parsedResume, parsedJD, gapAnalysis) {
       : analyzeCompetencyGaps(parsedResume, parsedJD);
 
   const breakdown = [
-    { id: 'keywordDensity', label: 'Keyword density match', ...scoreKeywordDensity(gap) },
-    { id: 'topThirdPlacement', label: 'Top-third keyword placement', ...scoreTopThirdPlacement(parsedResume, gap) },
-    { id: 'sectionHierarchy', label: 'Standard section hierarchy', ...scoreSectionHierarchy(parsedResume) },
-    { id: 'bulletQuality', label: 'XYZ-formula bullet quality', ...scoreBulletQuality(parsedResume) },
-    { id: 'skillBreadth', label: 'Technical skill breadth', ...scoreSkillBreadth(parsedResume) },
-    { id: 'contactParsability', label: 'Contact info parsability', ...scoreContactParsability(parsedResume) },
+    { id: 'keywordDensity', label: CRITERION_LABELS.keywordDensity, ...scoreKeywordDensity(gap) },
+    { id: 'topThirdPlacement', label: CRITERION_LABELS.topThirdPlacement, ...scoreTopThirdPlacement(parsedResume, gap) },
+    { id: 'sectionHierarchy', label: CRITERION_LABELS.sectionHierarchy, ...scoreSectionHierarchy(parsedResume) },
+    { id: 'bulletQuality', label: CRITERION_LABELS.bulletQuality, ...scoreBulletQuality(parsedResume) },
+    { id: 'skillBreadth', label: CRITERION_LABELS.skillBreadth, ...scoreSkillBreadth(parsedResume) },
+    { id: 'contactParsability', label: CRITERION_LABELS.contactParsability, ...scoreContactParsability(parsedResume) },
   ];
 
   const total = round1(breakdown.reduce((sum, c) => sum + c.score, 0));

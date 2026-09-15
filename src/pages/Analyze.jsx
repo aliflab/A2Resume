@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
-import { calculateATSScore } from '../services/atsScorer.js';
+import { CRITERION_LABELS, calculateATSScore } from '../services/atsScorer.js';
 import { analyzeCompetencyGaps } from '../services/gapAnalyzer.js';
 import { inferSkillsFromExperience, shouldOfferSkillInference } from '../services/skillInference.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
@@ -21,6 +21,9 @@ import { describeError } from '../utils/errorMessages.js';
 
 const asArray = (v) => (Array.isArray(v) ? v : []);
 const PRIORITIES = ['high', 'medium', 'low'];
+
+/** Current name for a criterion; a stored score may carry an older build's label. */
+const criterionLabel = (c) => CRITERION_LABELS[c?.id] ?? c?.label;
 
 export default function Analyze() {
   const { state } = useApp();
@@ -99,7 +102,7 @@ function FallbackBanner({ atsScore }) {
       </ul>
       {unscoreable.length > 0 && (
         <p className="muted">
-          Not measured: {unscoreable.map((c) => c.label).join(', ')}.{' '}
+          Not measured: {unscoreable.map(criterionLabel).join(', ')}.{' '}
           {unscoreable.length === 1 ? 'That criterion is' : 'Those criteria are'} excluded from the total,
           which is why the score is out of {atsScore.scoreableMax} rather than {atsScore.maxScore}.
         </p>
@@ -141,7 +144,7 @@ function ScoreCard({ atsScore }) {
           return (
             <li key={c.id} className={c.scoreable ? 'criterion' : 'criterion criterion--unscoreable'}>
               <div className="criterion__row">
-                <span className="criterion__label">{c.label}</span>
+                <span className="criterion__label">{criterionLabel(c)}</span>
                 <span className="criterion__value">
                   {c.scoreable ? (
                     <>
@@ -367,11 +370,13 @@ function SkillInferenceGate() {
   const applyApproved = useCallback(() => {
     if (approved.length === 0) return;
     dispatch({ type: ACTIONS.MERGE_INFERRED_SKILLS, payload: approved.map((s) => s.skill) });
-    setMerged({ count: approved.length });
+    // The reducer adds them to an existing tailoring pass too; say so, since
+    // that is the copy Export will use.
+    setMerged({ count: approved.length, alsoTailored: Boolean(state.tailoredResume) });
     setSuggestions(null);
     setDecisions({});
     setRescored(false);
-  }, [approved, dispatch]);
+  }, [approved, dispatch, state.tailoredResume]);
 
   // Re-run the deterministic half of the pipeline only. No AI call, no key,
   // no re-parse -- the resume object already changed, so the score simply
@@ -388,8 +393,9 @@ function SkillInferenceGate() {
       <section className="card infer">
         <h2>Skills added</h2>
         <p>
-          {merged.count} approved skill{merged.count === 1 ? '' : 's'} added to your resume, filed under
-          &ldquo;Inferred from experience&rdquo; so you can tell them apart from what you wrote yourself.
+          {merged.count} approved skill{merged.count === 1 ? '' : 's'} added to your resume
+          {merged.alsoTailored && ' and to your tailored resume from step 3'}, filed under &ldquo;Inferred from
+          experience&rdquo; so you can tell them apart from what you wrote yourself.
         </p>
         {rescored ? (
           <p className="inline-status inline-status--ok">Score updated. The numbers below now include them.</p>

@@ -140,7 +140,7 @@ export function testOffline() {
         !('resume' in s) &&
         !('changesLog' in s) &&
         !('resumeText' in s) &&
-        s.parsedJD?.title === 'Engineer' &&
+        s.parsedJD?.jobTitle === 'Engineer' &&
         s.sources?.resume === 'pdf' &&
         !('jobDescriptionUrl' in s.sources),
       r.value
@@ -178,6 +178,53 @@ export function testOffline() {
     r = noThrow(loadSession);
     Storage.prototype.getItem = originalGetItem;
     check('blocked storage on read -> unavailable, no throw', !r.threw && r.value.state === null && r.value.reason === 'unavailable', r);
+
+    // The gap analysis embedded in atsScore is stored once, not twice.
+    const gap = { matched: [{ keyword: 'Go', priority: 'high' }], partial: [], missing: [], matchRate: 100 };
+    const shared = { ...SAMPLE, gapAnalysis: gap, atsScore: { total: 61, gapAnalysis: gap } };
+    saveSession(shared);
+    let env = JSON.parse(localStorage.getItem(RAW_KEY));
+    check(
+      'dedup: shared gap analysis written once, flag set',
+      env.atsScoreSharesGapAnalysis === true && !('gapAnalysis' in env.state.atsScore) && env.state.gapAnalysis.matchRate === 100,
+      env
+    );
+    let loaded = loadSession().state;
+    check('dedup: re-attached on load as one shared object', loaded.atsScore.gapAnalysis === loaded.gapAnalysis);
+    check('dedup: restored state equals what was saved', JSON.stringify(loaded) === JSON.stringify(shared));
+    const measured = measureSession(shared);
+    check(
+      'dedup: measureSession counts what is written',
+      measured.total === localStorage.getItem(RAW_KEY).length && measured.perField.atsScore === JSON.stringify(env.state.atsScore).length,
+      { measured: measured.total, stored: localStorage.getItem(RAW_KEY).length }
+    );
+
+    saveSession({ ...shared, atsScore: { total: 61, gapAnalysis: { ...gap, matchRate: 5 } } });
+    env = JSON.parse(localStorage.getItem(RAW_KEY));
+    check(
+      'dedup: a different embedded copy is kept, not stripped',
+      env.atsScoreSharesGapAnalysis === false && env.state.atsScore.gapAnalysis.matchRate === 5
+    );
+
+    saveSession(SAMPLE);
+    loaded = loadSession().state;
+    check('dedup: a score with no embedded copy is not given one', !('gapAnalysis' in loaded.atsScore));
+
+    // A session written before dedup: two equal copies, no flag.
+    localStorage.setItem(RAW_KEY, JSON.stringify({ version: SESSION_VERSION, state: { ...SAMPLE, gapAnalysis: gap, atsScore: { total: 61, gapAnalysis: structuredClone(gap) } } }));
+    loaded = loadSession().state;
+    check('dedup: pre-dedup session loads with one shared object', loaded.atsScore.gapAnalysis === loaded.gapAnalysis);
+    saveSession(loaded);
+    env = JSON.parse(localStorage.getItem(RAW_KEY));
+    check('dedup: and its next save is deduplicated', env.atsScoreSharesGapAnalysis === true && !('gapAnalysis' in env.state.atsScore));
+
+    localStorage.setItem(RAW_KEY, JSON.stringify({ version: SESSION_VERSION, atsScoreSharesGapAnalysis: true, state: { ...SAMPLE, gapAnalysis: 'corrupt', atsScore: { total: 61 } } }));
+    r = noThrow(loadSession);
+    check(
+      'dedup: flag set but gapAnalysis dropped -> score kept without it, no throw',
+      !r.threw && r.value.state.atsScore?.total === 61 && !('gapAnalysis' in r.value.state.atsScore) && r.value.dropped.includes('gapAnalysis'),
+      r
+    );
 
     check('API key presence unchanged by any of the above', JSON.stringify(getKeyPresence()) === presenceBefore);
   } finally {

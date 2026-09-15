@@ -41,6 +41,31 @@ export default function Settings() {
         <h1>Settings</h1>
       </header>
       <ApiKeysSection />
+      <SessionDataSection />
+    </section>
+  );
+}
+
+/** Plain statement of where resume content lives. Same register as the key note. */
+function SessionDataSection() {
+  return (
+    <section className="card settings__section">
+      <h2>Your resume and job description</h2>
+
+      <div className="notice notice--info byok">
+        <p>
+          <strong>Your resume and the job description are saved only in this browser, on this device.</strong>{' '}
+          So is everything made from them: the analysis, the score, and the tailored resume. That is what lets a
+          reload pick up where you left off.
+        </p>
+        <p>
+          They stay there until you press <strong>Start over</strong> in the header, which deletes them. Clearing
+          your browser data deletes them too. Start over does not remove your API keys.
+        </p>
+        <p>
+          Until then, anyone who can use this browser profile can open them.
+        </p>
+      </div>
     </section>
   );
 }

@@ -22,6 +22,22 @@
  *   rather than leaving the previous one in place. An older snapshot quietly
  *   standing in for newer work on the next reload is worse than an empty
  *   store, for the same reason jdScraper treats a 200 login wall as failure.
+ *
+ * THE GAP ANALYSIS IS STORED ONCE
+ * calculateATSScore embeds the gap analysis it scored against, and every
+ * dispatch site hands it `state.gapAnalysis`, so in memory `atsScore.gapAnalysis`
+ * and `gapAnalysis` are one object. JSON has no references, so a plain write
+ * stored it twice. It is now written only under `gapAnalysis`, and the envelope
+ * flag `atsScoreSharesGapAnalysis` tells loadSession to re-attach it. The
+ * restored state has the same shape as before, so no reader changes.
+ * - Stripped only when the two are the same object. Anything else is written
+ *   as-is: a different embedded copy is data, not a duplicate.
+ * - The flag is what licenses re-attaching. A stored score that never had an
+ *   embedded copy is not given one.
+ * - A session written before this change (two equal copies, no flag) loads
+ *   with one shared object, so its next save is already deduplicated. Old and
+ *   new envelopes read correctly in both directions, so SESSION_VERSION is
+ *   unchanged.
  */
 
 import { get, remove, set } from './storageService.js';
@@ -93,6 +109,20 @@ export function pickSessionSlice(state) {
 }
 
 /**
+ * The slice as it is written: `atsScore` without the gap analysis it shares
+ * with `gapAnalysis`. See "THE GAP ANALYSIS IS STORED ONCE" above.
+ */
+function toStoredSlice(slice) {
+  const { atsScore, gapAnalysis } = slice;
+  if (!isPlainObject(atsScore) || !isPlainObject(gapAnalysis) || atsScore.gapAnalysis !== gapAnalysis) {
+    return { state: slice, atsScoreSharesGapAnalysis: false };
+  }
+  const stored = { ...atsScore };
+  delete stored.gapAnalysis;
+  return { state: { ...slice, atsScore: stored }, atsScoreSharesGapAnalysis: true };
+}
+
+/**
  * True when there is something worth keeping: input text, or any artefact.
  * A provider choice or a sources block on its own is not a session.
  */
@@ -147,7 +177,13 @@ export function saveSession(state) {
       report({ ok: true, error: null, message: null });
       return { ok: true, removed: true };
     }
-    set(SESSION_STORAGE_NAME, { version: SESSION_VERSION, savedAt: new Date().toISOString(), state: slice });
+    const stored = toStoredSlice(slice);
+    set(SESSION_STORAGE_NAME, {
+      version: SESSION_VERSION,
+      savedAt: new Date().toISOString(),
+      atsScoreSharesGapAnalysis: stored.atsScoreSharesGapAnalysis,
+      state: stored.state,
+    });
     report({ ok: true, error: null, message: null });
     return { ok: true, removed: false };
   } catch (err) {
@@ -189,6 +225,19 @@ export function loadSession() {
     else dropped.push(field);
   }
 
+  // Re-attach the gap analysis to the score it was stripped from. Only when
+  // both survived validation; a dropped gapAnalysis leaves the score without
+  // one, which readers already tolerate (they fall back to state.gapAnalysis).
+  const { atsScore, gapAnalysis } = restored;
+  if (isPlainObject(atsScore) && isPlainObject(gapAnalysis)) {
+    const stripped = envelope.atsScoreSharesGapAnalysis === true;
+    // Written before deduplication: two equal copies. Share one object so the
+    // next save writes it once. Spreading keeps the key where it was.
+    const equalCopy =
+      !stripped && isPlainObject(atsScore.gapAnalysis) && JSON.stringify(atsScore.gapAnalysis) === JSON.stringify(gapAnalysis);
+    if (stripped || equalCopy) restored.atsScore = { ...atsScore, gapAnalysis };
+  }
+
   return {
     state: restored,
     reason: 'restored',
@@ -209,12 +258,18 @@ export function clearSession() {
 
 /**
  * Serialized size of a state's persisted slice, in UTF-16 code units (what
- * browsers count against the quota), total and per field.
+ * browsers count against the quota), total and per field. Measures what
+ * saveSession actually writes, so `atsScore` excludes the shared gap analysis.
  */
 export function measureSession(state) {
-  const slice = pickSessionSlice(state);
+  const { state: slice, atsScoreSharesGapAnalysis } = toStoredSlice(pickSessionSlice(state));
   const perField = {};
   for (const field of PERSISTED_FIELD_NAMES) perField[field] = JSON.stringify(slice[field] ?? null).length;
-  const total = JSON.stringify({ version: SESSION_VERSION, savedAt: new Date().toISOString(), state: slice }).length;
+  const total = JSON.stringify({
+    version: SESSION_VERSION,
+    savedAt: new Date().toISOString(),
+    atsScoreSharesGapAnalysis,
+    state: slice,
+  }).length;
   return { total, perField, fractionOfTypicalQuota: total / TYPICAL_QUOTA_CHARS };
 }

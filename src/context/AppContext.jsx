@@ -111,6 +111,36 @@ export const ACTIONS = {
  */
 export const INFERRED_SKILLS_CATEGORY = 'Inferred from experience';
 
+/**
+ * `target` with the new skills from `incoming` appended under
+ * INFERRED_SKILLS_CATEGORY, or null when every one is already present.
+ */
+function withInferredSkills(target, incoming) {
+  const groups = Array.isArray(target.skills) ? target.skills : [];
+
+  const key = (s) => s.toLowerCase().replace(/[^a-z0-9+#]/g, '');
+  const existing = new Set(
+    groups.flatMap((g) => (Array.isArray(g?.skills) ? g.skills : [])).filter((s) => typeof s === 'string').map(key)
+  );
+
+  const fresh = [];
+  for (const skill of incoming) {
+    const k = key(skill);
+    if (!k || existing.has(k)) continue;
+    existing.add(k);
+    fresh.push(skill.trim());
+  }
+  if (fresh.length === 0) return null;
+
+  const at = groups.findIndex((g) => g?.category === INFERRED_SKILLS_CATEGORY);
+  const skills =
+    at === -1
+      ? [...groups, { category: INFERRED_SKILLS_CATEGORY, skills: fresh }]
+      : groups.map((g, i) => (i === at ? { ...g, skills: [...(Array.isArray(g.skills) ? g.skills : []), ...fresh] } : g));
+
+  return { ...target, skills };
+}
+
 export function appReducer(state, action) {
   switch (action.type) {
     case ACTIONS.RESET:
@@ -178,36 +208,31 @@ export function appReducer(state, action) {
     // Appends only. It never rewrites an existing category's list, never
     // touches any other part of the resume, and de-duplicates against every
     // skill already present so an approval cannot create a double entry.
+    //
+    // A tailoring pass that already exists gets the same append. Export prefers
+    // `tailoredResume`, so writing to `resume` alone left an approved skill
+    // invisible there until Tailor was re-run. Appending is what a re-run would
+    // produce anyway: mergeNonDestructiveResume unions skills, so every skill in
+    // `resume` ends up in the tailored copy. Clearing the pass instead would
+    // throw away a paid, already-reviewed rewrite to add one skill. Each copy is
+    // de-duplicated against itself, since the tailored one may hold skills the
+    // model added that the original lacks.
     case ACTIONS.MERGE_INFERRED_SKILLS: {
       const incoming = Array.isArray(action.payload) ? action.payload.filter((s) => typeof s === 'string' && s.trim()) : [];
       if (incoming.length === 0) return state;
 
-      const resume = state.resume && typeof state.resume === 'object' ? state.resume : {};
-      const groups = Array.isArray(resume.skills) ? resume.skills : [];
+      const resume = withInferredSkills(state.resume && typeof state.resume === 'object' ? state.resume : {}, incoming);
+      const tailoredResume =
+        state.tailoredResume && typeof state.tailoredResume === 'object' && !Array.isArray(state.tailoredResume)
+          ? withInferredSkills(state.tailoredResume, incoming)
+          : null;
+      if (!resume && !tailoredResume) return state;
 
-      const key = (s) => s.toLowerCase().replace(/[^a-z0-9+#]/g, '');
-      const existing = new Set(
-        groups.flatMap((g) => (Array.isArray(g?.skills) ? g.skills : [])).filter((s) => typeof s === 'string').map(key)
-      );
-
-      const fresh = [];
-      for (const skill of incoming) {
-        const k = key(skill);
-        if (!k || existing.has(k)) continue;
-        existing.add(k);
-        fresh.push(skill.trim());
-      }
-      if (fresh.length === 0) return state;
-
-      const at = groups.findIndex((g) => g?.category === INFERRED_SKILLS_CATEGORY);
-      const skills =
-        at === -1
-          ? [...groups, { category: INFERRED_SKILLS_CATEGORY, skills: fresh }]
-          : groups.map((g, i) =>
-              i === at ? { ...g, skills: [...(Array.isArray(g.skills) ? g.skills : []), ...fresh] } : g
-            );
-
-      return { ...state, resume: { ...resume, skills } };
+      return {
+        ...state,
+        resume: resume ?? state.resume,
+        tailoredResume: tailoredResume ?? state.tailoredResume,
+      };
     }
 
     case ACTIONS.CLEAR_ANALYSIS:

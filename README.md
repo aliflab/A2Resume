@@ -70,7 +70,7 @@ spinner (the two AI calls are slow, the two local steps are instant):
 Read-only display of what came back.
 
 - **ATS score** out of 100, across six criteria: keyword density match (35), top-third keyword
-  placement (15), section hierarchy (15), XYZ-formula bullet quality (15), technical skill breadth
+  placement (15), standard sections present and filled (15), XYZ-formula bullet quality (15), technical skill breadth
   (10), contact info parsability (10).
 - **Keyword gaps**: every keyword the posting emphasises, classified as matched, partial (a synonym
   or near-neighbour appears — partial credit only), or missing, weighted by the posting's own
