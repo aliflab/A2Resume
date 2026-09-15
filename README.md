@@ -104,6 +104,18 @@ across two layers on purpose:
 Anything the merge had to put back is surfaced in the UI, not hidden — if the safety net had to
 act, that is worth knowing before you read the rest of the rewrite closely.
 
+The tailored result is then **editable by hand**, one part at a time. The editable parts are:
+- the header and contact links
+- the summary
+- skills: add, remove and move between categories
+- every experience entry: bullets, dates, "I currently work here" and links
+- projects
+- education
+- certifications
+
+Edits go straight to Export and survive a reload. Discarding a tailoring pass you have edited asks
+first and names the edits you would lose, because a fresh pass starts from your original resume.
+
 ### Step 4 — Export (`/export`)
 
 Not built yet.
@@ -118,7 +130,7 @@ The pipeline from upload through tailoring works end to end. The pages past it d
 | --- | --- |
 | Input (`/input`) | Built — PDF upload, paste, JD URL fetch, provider selection, staged pipeline |
 | Analyze (`/analyze`) | Built — ATS score, gap breakdown, skill inference with approval gate |
-| Tailor (`/tailor`) | Built — tailoring pass, before/after changes log, corrections notice |
+| Tailor (`/tailor`) | Built — tailoring pass, hand editor for every section, before/after changes log, corrections notice |
 | Settings (`/settings`) | Built — key storage per provider, Test Connection |
 | Landing (`/`) | Built (minimal) |
 | Export (`/export`) | Placeholder |

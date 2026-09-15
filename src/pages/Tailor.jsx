@@ -2,24 +2,29 @@ import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
+import TailoredResumeEditor from '../components/tailor/TailoredResumeEditor.jsx';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
+import { describeManualEdits } from '../services/tailoredEdits.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS } from '../services/aiService.js';
 import { describeError } from '../utils/errorMessages.js';
 
 /**
- * Step 3: run the tailoring pass and show what it changed.
+ * Step 3: run the tailoring pass, edit the result by hand, and read what the
+ * pass changed.
  *
- * Deliberately minimal this session. There is no inline bullet editor and no
- * chat copilot here yet -- this page exists to trigger the pass and let the
- * user read every rewrite next to its original, which is the review step that
- * has to exist before any of the richer editing does.
+ * The editor (components/tailor/TailoredResumeEditor.jsx) writes one section
+ * or entry at a time through UPDATE_TAILORED_SECTION, and each save is recorded
+ * in `tailorManualEdits`. That log is what the discard confirmation reads: a
+ * new pass starts from the original resume, so hand edits never carry over,
+ * and the user is told which ones they are about to lose before it happens.
  *
  * Like every other page there is no route guard, so loaded cold it shows an
  * empty state pointing back at the step that produces its input.
  */
 
 const asArray = (v) => (Array.isArray(v) ? v : []);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function safePresence() {
   try {
@@ -34,13 +39,15 @@ export default function Tailor() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   const resume = state.resume ?? null;
   const parsedJD = state.parsedJD ?? null;
   const gapAnalysis = state.gapAnalysis ?? state.atsScore?.gapAnalysis ?? null;
-  const tailored = state.tailoredResume ?? null;
+  const tailored = state.tailoredResume && typeof state.tailoredResume === 'object' ? state.tailoredResume : null;
   const changesLog = asArray(state.changesLog);
   const corrections = asArray(state.tailorCorrections);
+  const edits = describeManualEdits(state.tailorManualEdits);
 
   const provider = state.settings?.provider ?? state.sources?.provider ?? null;
   const hasKey = provider ? Boolean(safePresence()[provider]) : false;
@@ -66,7 +73,15 @@ export default function Tailor() {
   const discard = useCallback(() => {
     dispatch({ type: ACTIONS.CLEAR_TAILORING });
     setError(null);
+    setConfirmingDiscard(false);
   }, [dispatch]);
+
+  // With no hand edits there is nothing but the AI pass to lose, and it can
+  // be run again, so the discard stays one click. With edits it asks first.
+  const requestDiscard = useCallback(() => {
+    if (edits.length > 0) setConfirmingDiscard(true);
+    else discard();
+  }, [discard, edits.length]);
 
   if (!resume || !parsedJD) return <EmptyState />;
 
@@ -77,7 +92,7 @@ export default function Tailor() {
         <h1>Tailor your resume</h1>
         <p className="muted">
           Rewrites your bullets toward the posting. It never deletes a role, a date, or a skill, and it is not
-          allowed to invent a number your resume does not already support.
+          allowed to invent a number your resume does not already support. You can then edit the result by hand.
         </p>
       </header>
 
@@ -109,25 +124,66 @@ export default function Tailor() {
             <h2>What changed</h2>
             <p className="muted">
               {changesLog.length === 0
-                ? 'The model reported no changes.'
-                : `${changesLog.length} change${changesLog.length === 1 ? '' : 's'} reported.`}
+                ? 'The AI pass reported no changes.'
+                : `The AI pass reported ${plural(changesLog.length, 'change')}.`}
             </p>
-            <p className="actions">
-              <Link to="/export" className="button button--primary">
-                Continue to export
-              </Link>
-              <button type="button" className="button" onClick={discard}>
-                Discard and start over
-              </button>
-            </p>
+            {edits.length > 0 && (
+              <p className="tailor__edits" role="status">
+                You have edited {plural(edits.length, 'part')} by hand since then: {edits.join('; ')}. Export uses your
+                edited version.
+              </p>
+            )}
+
+            {confirmingDiscard ? (
+              <DiscardConfirmation edits={edits} onConfirm={discard} onCancel={() => setConfirmingDiscard(false)} />
+            ) : (
+              <p className="actions">
+                <Link to="/export" className="button button--primary">
+                  Continue to export
+                </Link>
+                <button type="button" className="button" onClick={requestDiscard}>
+                  Discard and start over
+                </button>
+              </p>
+            )}
           </section>
 
           {corrections.length > 0 && <CorrectionsNotice corrections={corrections} />}
 
-          {changesLog.length > 0 && <ChangesList changes={changesLog} />}
+          <TailoredResumeEditor resume={tailored} />
+
+          {changesLog.length > 0 && <ChangesList changes={changesLog} edited={edits.length > 0} />}
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * The only way to get a fresh AI pass is to discard this one, and a fresh pass
+ * starts from the original resume -- so this is the moment hand edits would be
+ * lost. Inline rather than window.confirm, like Start over. It names the edits
+ * and says plainly that they will not carry over.
+ */
+function DiscardConfirmation({ edits, onConfirm, onCancel }) {
+  return (
+    <div className="notice notice--warn tailor__discard" role="alert">
+      <p>
+        <strong>Discarding throws away your {plural(edits.length, 'hand edit')}.</strong>
+      </p>
+      <p>
+        This removes the tailored resume, including what you changed in: {edits.join('; ')}. Running tailoring again
+        starts from your original resume from step 1, so none of these edits will carry over.
+      </p>
+      <p className="actions">
+        <button type="button" className="button button--danger" onClick={onConfirm}>
+          Discard my edits and start over
+        </button>
+        <button type="button" className="button" onClick={onCancel}>
+          Keep my edits
+        </button>
+      </p>
+    </div>
   );
 }
 
@@ -174,10 +230,16 @@ function CorrectionsNotice({ corrections }) {
   );
 }
 
-function ChangesList({ changes }) {
+function ChangesList({ changes, edited }) {
   return (
     <section className="card">
       <h2>Before and after</h2>
+      {edited && (
+        <p className="muted">
+          This is what the AI pass changed. Your hand edits are not listed here, so an &ldquo;After&rdquo; below may
+          no longer match your resume.
+        </p>
+      )}
       <ol className="changes">
         {changes.map((change, i) => (
           <li key={`${change.section}-${i}`} className="change">

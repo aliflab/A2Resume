@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
 
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
+import { applyTailoredEdit, recordManualEdit } from '../services/tailoredEdits.js';
 
 /**
  * The single global store for the app. useReducer + Context only --
@@ -40,6 +41,13 @@ export const initialState = {
   changesLog: null,
   /** What the merge safety net had to correct in the model's output. */
   tailorCorrections: null,
+  /**
+   * Which parts of `tailoredResume` the user has edited by hand since the
+   * pass: `[{ section, index, label }]`, one row per part. Null means no
+   * edits. Discarding or replacing the pass clears it, and says so first --
+   * this is what lets Tailor and Input name the edits they would throw away.
+   */
+  tailorManualEdits: null,
 
   /**
    * Where each artefact came from, for display and for deciding whether a
@@ -89,6 +97,8 @@ export const ACTIONS = {
   SET_ATS_SCORE: 'set_ats_score',
   SET_TAILORED_RESUME: 'set_tailored_resume',
   CLEAR_TAILORING: 'clear_tailoring',
+  /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
+  UPDATE_TAILORED_SECTION: 'update_tailored_section',
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
@@ -175,12 +185,30 @@ export function appReducer(state, action) {
         tailoredResume: payload.resume ?? null,
         changesLog: Array.isArray(payload.changesLog) ? payload.changesLog : [],
         tailorCorrections: Array.isArray(payload.corrections) ? payload.corrections : [],
+        // A fresh pass carries no hand edits. Tailor only offers a new pass
+        // after a discard, and the discard asks first when edits exist.
+        tailorManualEdits: null,
       };
     }
 
     // Discard a tailoring pass without touching the analysis behind it.
     case ACTIONS.CLEAR_TAILORING:
-      return { ...state, tailoredResume: null, changesLog: null, tailorCorrections: null };
+      return { ...state, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null };
+
+    // One section or one entry, never the whole resume. Invalid and no-op
+    // edits return null from applyTailoredEdit and leave state untouched, so
+    // they neither write storage nor show up in the edit log. With no
+    // tailoring pass there is nothing to edit (the same rule as a pass that
+    // lands after "Start over").
+    case ACTIONS.UPDATE_TAILORED_SECTION: {
+      const result = applyTailoredEdit(state.tailoredResume, action.payload);
+      if (!result) return state;
+      return {
+        ...state,
+        tailoredResume: result.resume,
+        tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
+      };
+    }
 
     case ACTIONS.SET_SOURCES:
       return { ...state, sources: { ...state.sources, ...action.payload } };
@@ -247,6 +275,7 @@ export function appReducer(state, action) {
         tailoredResume: null,
         changesLog: null,
         tailorCorrections: null,
+        tailorManualEdits: null,
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
@@ -291,6 +320,7 @@ export function AppProvider({ children }) {
     tailoredResume,
     changesLog,
     tailorCorrections,
+    tailorManualEdits,
     sources,
     settings,
   } = state;
@@ -310,10 +340,11 @@ export function AppProvider({ children }) {
       tailoredResume,
       changesLog,
       tailorCorrections,
+      tailorManualEdits,
       sources,
       settings,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, tailoredResume, changesLog, tailorCorrections, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, sources, settings]);
 
   // Dev-only read handle for __manual__/session.manual.js, which has to compare
   // the live store against storage across a reload. Stripped from production

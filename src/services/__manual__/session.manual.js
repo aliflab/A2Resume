@@ -79,6 +79,7 @@ const SAMPLE = {
   tailoredResume: { name: 'Jane Doe' },
   changesLog: [{ section: 'experience', before: 'a', after: 'b' }],
   tailorCorrections: [],
+  tailorManualEdits: [{ section: 'summary', index: null, label: 'Summary' }],
   sources: { resume: 'paste', jobDescription: 'paste', resumeFileName: null, jobDescriptionUrl: null, provider: 'gemini' },
   settings: { provider: 'gemini' },
 };
@@ -153,7 +154,7 @@ export function testOffline() {
     check('only the persisted fields are written', JSON.stringify(Object.keys(stored.state)) === JSON.stringify(PERSISTED_FIELD_NAMES));
     check('round trip is exact', JSON.stringify(loadSession().state) === JSON.stringify(SAMPLE));
 
-    saveSession({ ...SAMPLE, resumeText: '', jobDescription: '', resume: null, parsedJD: null, gapAnalysis: null, atsScore: null, tailoredResume: null, changesLog: null, tailorCorrections: null });
+    saveSession({ ...SAMPLE, resumeText: '', jobDescription: '', resume: null, parsedJD: null, gapAnalysis: null, atsScore: null, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null });
     check('empty slice removes the entry rather than storing empties', localStorage.getItem(RAW_KEY) === null);
     check('provider choice alone is not a session', !hasSessionContent({ settings: { provider: 'gemini' }, sources: { provider: 'gemini' } }));
 

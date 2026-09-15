@@ -8,6 +8,7 @@ import { runAnalysisPipeline } from '../services/analysisPipeline.js';
 import { getKeyPresence, getApiKey, PROVIDER_IDS } from '../services/apiKeyService.js';
 import { SUPPORTED_PROVIDERS, PROVIDER_LABELS } from '../services/aiService.js';
 import { describeError } from '../utils/errorMessages.js';
+import { describeManualEdits } from '../services/tailoredEdits.js';
 
 /**
  * Step 1 of the wizard: get a resume and a job description in, pick a
@@ -407,6 +408,21 @@ export default function InputPage() {
         {error && <ErrorPanel error={error} onDismiss={() => dispatch({ type: ACTIONS.SET_ERROR, payload: null })} />}
 
         {running && <StageProgress current={stage} />}
+
+        {/* A new run clears tailoring (CLEAR_ANALYSIS), hand edits included.
+            Said up front, next to the button that does it. */}
+        {!running && state.tailoredResume && describeManualEdits(state.tailorManualEdits).length > 0 && (
+          <div className="notice notice--warn" role="status">
+            <p>
+              <strong>
+                Running a new analysis replaces your tailored resume from step 3, including{' '}
+                {describeManualEdits(state.tailorManualEdits).length} part
+                {describeManualEdits(state.tailorManualEdits).length === 1 ? '' : 's'} you edited by hand.
+              </strong>{' '}
+              <Link to="/export">Export your edited resume</Link> first if you want to keep it.
+            </p>
+          </div>
+        )}
 
         <div className="actions">
           <button type="submit" className="button button--primary" disabled={!canRun}>

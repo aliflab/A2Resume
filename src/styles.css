@@ -764,11 +764,11 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
-   Tailor (step 3). Reuses .card, .notice, .badge, .inline-status.
+   Tailor (step 3). Reuses .card, .notice, .badge, .inline-status, .actions.
 
-   Minimal on purpose: this session's page only triggers the pass and shows
-   the before/after log. The inline bullet editor lands later and will need
-   its own block.
+   The pass, the hand editor (.edit-block / .editor), and the before/after
+   log. Editor inputs are styled under .editor only, so no other page's
+   text inputs change.
    --------------------------------------------------------------------------- */
 
 .tailor__step {
@@ -837,6 +837,223 @@ body {
 .change__reason {
   margin: 0.3rem 0 0;
   font-size: 0.85rem;
+}
+
+.tailor__edits {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+}
+
+.tailor__discard {
+  margin-top: 1rem;
+}
+
+/* Hand editor ------------------------------------------------------------ */
+
+.editor-card > h2 {
+  margin: 0 0 0.25rem;
+}
+
+.editor-card__intro {
+  margin: 0 0 0.5rem;
+}
+
+.edit-block {
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.editor-card > h2 + .edit-block,
+.editor-card__intro + .edit-block {
+  border-top: none;
+}
+
+.edit-block:last-child {
+  padding-bottom: 0;
+}
+
+.edit-block--editing {
+  margin: 0 -0.75rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  border-left: 3px solid var(--accent);
+}
+
+.edit-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.edit-block__head h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.edit-block__view p,
+.edit-block__view ul {
+  margin: 0.3rem 0 0;
+}
+
+.edit-block__view ul {
+  padding-left: 1.2rem;
+}
+
+.edit-block__strong {
+  font-weight: 600;
+}
+
+.edit-block__links {
+  list-style: none;
+  padding-left: 0 !important;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.edit-block__empty {
+  font-style: italic;
+}
+
+.editor input[type='text'],
+.editor input[type='url'],
+.editor input[type='email'],
+.editor input[type='tel'],
+.editor select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.editor input:disabled {
+  opacity: 0.55;
+}
+
+/* Prose, not pasted source text, so not the monospace the other textareas use. */
+.editor textarea {
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+
+.editor .field-label {
+  margin: 0.75rem 0 0.3rem;
+}
+
+.editor .actions {
+  margin-top: 1rem;
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0 0.9rem;
+}
+
+.editor-field {
+  min-width: 0;
+  flex: 1;
+}
+
+.editor-fieldset {
+  border: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.editor .editor-fieldset > legend {
+  padding: 0;
+  margin: 0 0 0.3rem;
+}
+
+.editor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.editor-list__item {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.editor-list__item > textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-link {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) minmax(10rem, 2fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+@media (max-width: 36rem) {
+  .editor-link {
+    grid-template-columns: 1fr;
+  }
+}
+
+.editor-add {
+  margin-top: 0.5rem;
+}
+
+.editor-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+}
+
+.editor-skill-group {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.2rem 0.75rem 0.75rem;
+  margin: 0.75rem 0 0;
+  min-width: 0;
+}
+
+.editor-skill-group .row,
+.editor-cert-link {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.editor-skill {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.editor-skill__name {
+  flex: 1;
+  min-width: 6rem;
+}
+
+.editor .editor-skill select {
+  width: auto;
+  max-width: 14rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------------------------

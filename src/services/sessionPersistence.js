@@ -65,6 +65,7 @@ const PERSISTED_FIELDS = {
   tailoredResume: 'object',
   changesLog: 'array',
   tailorCorrections: 'array',
+  tailorManualEdits: 'array',
   sources: 'flat',
   settings: 'flat',
 };
@@ -72,7 +73,7 @@ const PERSISTED_FIELDS = {
 export const PERSISTED_FIELD_NAMES = Object.keys(PERSISTED_FIELDS);
 
 /** Fields whose presence means a pipeline step actually produced something. */
-const ARTEFACT_FIELDS = ['resume', 'parsedJD', 'gapAnalysis', 'atsScore', 'tailoredResume', 'changesLog', 'tailorCorrections'];
+const ARTEFACT_FIELDS = ['resume', 'parsedJD', 'gapAnalysis', 'atsScore', 'tailoredResume', 'changesLog', 'tailorCorrections', 'tailorManualEdits'];
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
