@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
 
-import { rescoreCurrentResume } from '../services/currentResume.js';
+import { recoverBaseline, rescoreCurrentResume } from '../services/currentResume.js';
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
 import { applyTailoredEdit, recordManualEdit } from '../services/tailoredEdits.js';
 
@@ -360,17 +360,23 @@ const AppContext = createContext(null);
  *   loadSession adopts that as the baseline, and this rescores the tailored copy.
  * - Build drift: a current score computed by an older scorer is replaced.
  *   The baseline is not rescored. It records what the Input run found.
+ *
+ * `recoverBaseline` then runs, in that order: it only acts on a session that
+ * reached here with a score and no baseline, which is the state the rescore
+ * above can itself create out of a save taken mid-run. See currentResume.js.
  */
 export function hydrate(base, load = loadSession) {
   const { state: restored } = load();
   if (!restored) return base;
-  return rescoreCurrentResume({
-    ...base,
-    ...restored,
-    sources: { ...base.sources, ...(restored.sources ?? {}) },
-    settings: { ...base.settings, ...(restored.settings ?? {}) },
-    ui: base.ui,
-  });
+  return recoverBaseline(
+    rescoreCurrentResume({
+      ...base,
+      ...restored,
+      sources: { ...base.sources, ...(restored.sources ?? {}) },
+      settings: { ...base.settings, ...(restored.settings ?? {}) },
+      ui: base.ui,
+    }),
+  );
 }
 
 export function AppProvider({ children }) {

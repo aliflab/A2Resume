@@ -33,7 +33,7 @@
 
 import { analyzeCompetencyGaps, collectResumeSkills, collectResumeText, countOccurrences } from '../gapAnalyzer.js';
 import { calculateATSScore } from '../atsScorer.js';
-import { compareScores, describeScoreChange, rescoreCurrentResume, selectCurrentResume } from '../currentResume.js';
+import { compareScores, describeScoreChange, recoverBaseline, rescoreCurrentResume, selectCurrentResume } from '../currentResume.js';
 import { mergeNonDestructiveResume } from '../resumeTailor.js';
 import { toDraft } from '../tailoredEdits.js';
 import { SESSION_STORAGE_NAME, SESSION_VERSION, loadSession, measureSession, saveSession } from '../sessionPersistence.js';
@@ -154,6 +154,9 @@ export async function testScenario() {
     s = run(s, 'SET_RESUME', resume);
     if (stopAfter === 'resume') return s;
     s = run(s, 'SET_PARSED_JD', jd);
+    // The save effect writes after every dispatch, so a real save lands here:
+    // resume and JD parsed, neither score computed yet.
+    if (stopAfter === 'parsedJD') return s;
     const gap = analyzeCompetencyGaps(resume, jd);
     s = run(s, 'SET_GAP_ANALYSIS', gap);
     s = run(s, 'SET_ATS_SCORE', calculateATSScore(resume, jd, gap));
@@ -272,6 +275,58 @@ export async function testScenario() {
       const r3 = hydrate(initialState, loadSession);
       check('pre-fix session: its stale score becomes the baseline', json(r3.originalAtsScore) === baselineJson);
       check('pre-fix session: the tailored resume is rescored on load', json(r3.atsScore) === json(edited2.atsScore) && consistent(r3));
+
+      // --- 6b. The baseline hole -------------------------------------------
+      // A save taken between SET_PARSED_JD and SET_GAP_ANALYSIS has no score,
+      // so toStoredSlice writes both baseline keys as null. loadSession then
+      // sees those keys PRESENT and skips its shares-current fallback, and the
+      // rescore on load computes a score into a state with no baseline. The
+      // session showed no before/after card ever again. Found in a real stored
+      // session (2026-09-16), not synthesised: dev reloads on every save to
+      // AppContext.jsx, which is enough to take that mid-run snapshot.
+      console.log('6b. A lost baseline is recovered on load');
+      const midSave = inputRun(initialState, parsedResume(), parsedJD(), { stopAfter: 'parsedJD' });
+      check('mid-run state: a resume and a JD, but no score yet', isObj(midSave.resume) && isObj(midSave.parsedJD) && midSave.atsScore === null && midSave.originalAtsScore === null);
+      saveSession(midSave);
+      env = JSON.parse(localStorage.getItem(RAW_KEY));
+      check(
+        'mid-run save writes the null-baseline envelope that caused the hole',
+        env.originalScoreSharesCurrent === false && env.state.originalAtsScore === null && env.state.atsScore === null,
+        env.originalScoreSharesCurrent
+      );
+      const r4 = hydrate(initialState, loadSession);
+      check('mid-run reload: the rescore still computes a current score', isObj(r4.atsScore) && consistent(r4));
+      check('THE HOLE: that score now arrives with a baseline', isObj(r4.originalAtsScore) && isObj(r4.originalGapAnalysis), { baseline: r4.originalAtsScore });
+      check('mid-run reload: untailored, so baseline and current are one object', r4.originalAtsScore === r4.atsScore && r4.originalGapAnalysis === r4.gapAnalysis);
+      check('mid-run baseline equals a full Input run of the same pair', json(r4.originalAtsScore) === baselineJson);
+      saveSession(r4);
+      env = JSON.parse(localStorage.getItem(RAW_KEY));
+      check('the session heals in place: its next save is a normal shared-baseline envelope', env.originalScoreSharesCurrent === true && !('originalAtsScore' in env.state));
+      check('and it stays healed across a second reload', isObj(hydrate(initialState, loadSession).originalAtsScore));
+
+      // The shape the real stored session was found in: a tailoring pass and a
+      // genuine current score, with both baseline keys explicitly null. Here
+      // adopting the current score as the baseline would report "no change"
+      // and claim the rewrite achieved nothing, so it must be recomputed.
+      const lost = { ...edited2, originalGapAnalysis: null, originalAtsScore: null };
+      saveSession(lost);
+      env = JSON.parse(localStorage.getItem(RAW_KEY));
+      check('tailored session with a lost baseline: stored with null baseline keys', env.originalScoreSharesCurrent === false && env.state.originalAtsScore === null && isObj(env.state.atsScore));
+      const r5 = hydrate(initialState, loadSession);
+      check('tailored + lost baseline: recovered on load', isObj(r5.originalAtsScore) && isObj(r5.originalGapAnalysis));
+      check('recovered baseline is the ORIGINAL resume, not a copy of the tailored score', r5.originalAtsScore.total !== r5.atsScore.total, { baseline: r5.originalAtsScore.total, current: r5.atsScore.total });
+      check('recovered baseline reproduces exactly what the Input run computed', json(r5.originalAtsScore) === baselineJson);
+      check('current score still describes the tailored resume', consistent(r5));
+      const recovered = compareScores(r5.originalAtsScore, r5.atsScore, r5.originalGapAnalysis, r5.gapAnalysis);
+      check('the before/after comparison is back, and says the rewrite helped', recovered?.direction === 'up', recovered && describeScoreChange(recovered));
+      check('and it names the keywords the rewrite surfaced', recovered.keywords.improved.some((m) => m.to === 'matched'));
+
+      // What recovery must NOT do.
+      check('a state that already has a baseline is returned untouched', recoverBaseline(edited2) === edited2);
+      check('no score yet: no baseline invented (the Input run will seed it)', recoverBaseline(midSave) === midSave);
+      check('no parsed JD: no baseline invented, no throw', recoverBaseline({ ...lost, parsedJD: null }).originalAtsScore == null);
+      check('no resume: no baseline invented, no throw', recoverBaseline({ ...lost, resume: null }).originalAtsScore == null);
+      check('a half-written baseline is rebuilt as a matched pair', isObj(recoverBaseline({ ...edited2, originalAtsScore: null }).originalAtsScore));
     }
 
     // --- 7. Staleness -----------------------------------------------------
