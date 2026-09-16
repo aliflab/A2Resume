@@ -20,11 +20,43 @@
  *   await t.liveLinkRoundTrip();   // on /tailor: add a link to experience 1, save, remove it, save
  *   await t.liveToggleCurrent();   // on /tailor: current on -> "Present"; off -> the end date returns
  *
+ * Draft autosave. A real reload sits between the first two, so they run as a
+ * sequence. They type into the SUMMARY block and restore it at the end:
+ *
+ *   t.testDraftsOffline();                 // ASSERTIONS, no DOM (also runs under Node)
+ *   await t.liveTypeDraft();               // on /tailor: opens Summary, types, waits for the autosave
+ *   // reload the page (F5), still on /tailor
+ *   (await import('/src/services/__manual__/tailorEditor.manual.js')).verifyDraftRecovered();
+ *   await t.liveDiscardRecoveredDraft();   // discard, and Cancel, both fall back to the saved version
+ *   await t.liveDraftClearedByNewPass();   // a landed pass clears a stale draft (stubbed, no AI call)
+ *
+ * Draft autosave. These type into the SUMMARY block and need a real reload
+ * between the two halves, so they are run in pairs:
+ *
+ *   await t.liveTypeDraft();       // on /tailor: opens Summary, types, waits for the autosave
+ *   // reload the page (F5), still on /tailor
+ *   (await import('/src/services/__manual__/tailorEditor.manual.js')).verifyDraftRecovered();
+ *   await t.liveDiscardRecoveredDraft();   // then: falls back to the last saved version
+ *   await t.liveDraftClearedByNewPass();   // a completed pass clears a stale draft (stubbed pass, no AI call)
+ *
  * Live checks read the store through window.a2resumeDev (dev builds only) and
  * never print resume content beyond the test's own marker text.
  */
 
-import { applyTailoredEdit, describeManualEdits, recordManualEdit, toDraft, toggleCurrentlyWorking } from '../tailoredEdits.js';
+import {
+  DRAFT_AUTOSAVE_MS,
+  applyTailoredEdit,
+  committedDraft,
+  describeManualEdits,
+  draftKey,
+  dropPendingDraft,
+  isDraftAddress,
+  putPendingDraft,
+  recordManualEdit,
+  recoverableDrafts,
+  toDraft,
+  toggleCurrentlyWorking,
+} from '../tailoredEdits.js';
 import { formatDateRange, generatePlainText, normalizeResumeForExport, selectExportSource } from '../resumeExport.js';
 import { SESSION_STORAGE_NAME, loadSession, saveSession } from '../sessionPersistence.js';
 
@@ -217,6 +249,45 @@ export function testOffline() {
 }
 
 /** The action itself, and every path that must clear the edit log. Browser only (imports a .jsx module). */
+export function testDraftsOffline() {
+  failed = 0;
+  console.group('tailorEditor - pending drafts (offline)');
+  const r = sample();
+
+  check('addresses: a list section needs an index, a single section must not have one',
+    isDraftAddress('experience', 0) && isDraftAddress('summary', null) && !isDraftAddress('summary', 0) && !isDraftAddress('experience', null) && !isDraftAddress('nonsense', null));
+  check('keys are stable and distinguish entries', draftKey('summary', null) === 'summary' && draftKey('experience', 1) === 'experience:1');
+
+  // put / drop
+  const d1 = putPendingDraft(null, { section: 'summary', value: 'half a sentence' });
+  check('put: first draft creates the list', Array.isArray(d1) && d1.length === 1 && d1[0].index === null);
+  const d2 = putPendingDraft(d1, { section: 'summary', value: 'half a sentence, continued' });
+  check('put: the same block is replaced, not appended', d2.length === 1 && d2[0].value.endsWith('continued'));
+  check('put: an identical value returns the SAME array, so no state change and no write', putPendingDraft(d2, { section: 'summary', value: d2[0].value }) === d2);
+  const d3 = putPendingDraft(d2, { section: 'experience', index: 0, value: toDraft('experience', r.experience[0]) });
+  check('put: a second block is appended (several can be open at once)', d3.length === 2);
+  check('put: a bad address changes nothing, same reference', putPendingDraft(d3, { section: 'summary', index: 4, value: 'x' }) === d3);
+  check('drop: removes only that block', dropPendingDraft(d3, 'summary').length === 1);
+  check('drop: nothing to drop returns the argument itself, null included', dropPendingDraft(d3, 'education', 0) === d3 && dropPendingDraft(null, 'summary') === null);
+
+  // committedDraft / recoverableDrafts
+  check('committed: the saved value of a block, as a draft', committedDraft('summary', null, r) === r.summary);
+  check('committed: an index past the end of the list is not a block', committedDraft('experience', 9, r) === undefined);
+  const same = putPendingDraft(null, { section: 'summary', value: r.summary });
+  check('recoverable: a draft equal to the saved value is NOT offered back', recoverableDrafts(same, r).length === 0);
+  const diff = putPendingDraft(null, { section: 'summary', value: `${r.summary} And one more clause.` });
+  const rec = recoverableDrafts(diff, r);
+  check('recoverable: a draft that differs IS offered back, with a label', rec.length === 1 && rec[0].key === 'summary' && rec[0].label === 'Summary');
+  check('recoverable: a draft against a block that no longer exists is dropped', recoverableDrafts(putPendingDraft(null, { section: 'experience', index: 9, value: {} }), r).length === 0);
+  check('recoverable: junk rows are skipped, not thrown on', recoverableDrafts([null, 'x', { section: 'nope' }, ...diff], r).length === 1);
+  check('recoverable: tolerates a missing resume', recoverableDrafts(diff, null).length === 0);
+  check('the autosave delay is a real number the live tests can wait on', Number.isFinite(DRAFT_AUTOSAVE_MS) && DRAFT_AUTOSAVE_MS >= 1000 && DRAFT_AUTOSAVE_MS <= 2000);
+
+  console.log(failed ? `${failed} FAILED` : 'all passed');
+  console.groupEnd();
+  return failed === 0;
+}
+
 export async function testReducer() {
   failed = 0;
   const { appReducer, initialState, ACTIONS } = await import('../../context/AppContext.jsx');
@@ -445,4 +516,192 @@ export async function liveToggleCurrent() {
   return failed === 0;
 }
 
-export default { testOffline, testReducer, liveEditBullet, verifyBulletSurvived, verifyExportShowsBullet, liveLinkRoundTrip, liveToggleCurrent };
+// ---------------------------------------------------------------------------
+// Draft autosave, live. These type into the SUMMARY block of whatever session
+// is loaded, so run them on test data. liveDiscardRecoveredDraft() puts the
+// summary back the way it found it.
+// ---------------------------------------------------------------------------
+
+const DRAFT_KEY = '__a2resume_editor_draft';
+const draftMemo = () => JSON.parse(sessionStorage.getItem(DRAFT_KEY) || '{}');
+const rememberDraft = (patch) => sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...draftMemo(), ...patch }));
+
+const storedDrafts = () => JSON.parse(localStorage.getItem(RAW_KEY) || 'null')?.state?.draftEdits ?? null;
+const pendingDrafts = () => liveState().draftEdits;
+const waitForAutosave = () => waitFor(() => pendingDrafts(), 'the autosave to fire', DRAFT_AUTOSAVE_MS + 4000);
+
+async function openSummary() {
+  const button = document.querySelector('button[aria-label="Edit summary"]');
+  if (!button) throw new Error('No "Edit summary" button. Open /tailor on a session with a tailoring pass.');
+  const block = button.closest('.edit-block');
+  button.click();
+  await waitFor(() => block.querySelector('textarea[name="summary"]'), 'summary field');
+  return block;
+}
+
+function finishDraft(next) {
+  console.log(failed ? `${failed} FAILED` : 'all passed');
+  console.groupEnd();
+  if (next) console.log(next);
+  return failed === 0;
+}
+
+/** Step 1: open Summary, type, wait for the debounce, DO NOT save. Then reload. */
+export async function liveTypeDraft() {
+  failed = 0;
+  console.group('tailorEditor - live draft 1: type, autosave, do not save');
+  try {
+    const saved = liveState().tailoredResume?.summary ?? '';
+    const block = await openSummary();
+    const field = block.querySelector('textarea[name="summary"]');
+    const typed = `${field.value.trim()} DRAFT-MARKER-${Date.now()}`.trim();
+    rememberDraft({ saved, typed });
+
+    check('before typing: nothing pending in the store or in storage', pendingDrafts() === null && storedDrafts() === null);
+    setValue(field, typed);
+    check('immediately after typing: still nothing written (it is debounced)', pendingDrafts() === null);
+
+    await waitForAutosave();
+    const pending = pendingDrafts();
+    check('the draft reached the store', pending.length === 1 && pending[0].section === 'summary' && pending[0].value === typed);
+    check('the draft reached storage, inside the ONE session entry', storedDrafts()?.[0]?.value === typed);
+    check('the saved resume is untouched: a draft is not a save', liveState().tailoredResume.summary === saved);
+    check('no hand edit was logged for an unsaved draft', !(liveState().tailorManualEdits ?? []).some((e) => e.section === 'summary'));
+    console.log(`typed ${typed.length} chars; the saved summary is still ${saved.length} chars`);
+  } catch (err) {
+    check(err.message, false);
+  }
+  return finishDraft('Now RELOAD the page (F5), stay on /tailor, then run verifyDraftRecovered().');
+}
+
+/** Step 2, after a real reload: the draft came back, reopened and marked unsaved. */
+export function verifyDraftRecovered() {
+  failed = 0;
+  console.group('tailorEditor - live draft 2: recovered after a reload');
+  try {
+    const { typed, saved } = draftMemo();
+    if (typeof typed !== 'string') throw new Error('Run liveTypeDraft() first, then reload.');
+
+    check('the draft survived the reload in the store', pendingDrafts()?.[0]?.value === typed);
+    check('the resume is still the last SAVED version, not the draft', liveState().tailoredResume.summary === saved);
+
+    const block = document.querySelector('button[aria-label="Discard Summary draft"]')?.closest('.edit-block');
+    check('the Summary block reopened by itself', Boolean(block) && Boolean(block.querySelector('.editor')));
+    check('the field holds the draft, not the saved text', block?.querySelector('textarea[name="summary"]')?.value === typed);
+
+    const notice = block?.querySelector('.edit-block__draft');
+    check(
+      'the block says it is an unsaved recovered draft',
+      Boolean(notice) && /unsaved draft/i.test(notice.innerText) && /not your last saved version/i.test(notice.innerText),
+      notice?.innerText
+    );
+    check('there is a control to throw it away', Boolean(buttonByText(notice, 'Discard draft and use the last saved version')));
+
+    const banner = document.querySelector('.editor-recovered');
+    check('the page also says so above the editor, naming the part', Boolean(banner) && banner.innerText.includes('Summary') && /not saved yet/i.test(banner.innerText), banner?.innerText);
+  } catch (err) {
+    check(err.message, false);
+  }
+  return finishDraft('Next: await liveDiscardRecoveredDraft() to check the fallback path.');
+}
+
+/** Step 3: discard the recovered draft; the block falls back to the saved version. Cancel too. */
+export async function liveDiscardRecoveredDraft() {
+  failed = 0;
+  console.group('tailorEditor - live draft 3: discard falls back to the saved version');
+  try {
+    const { typed, saved } = draftMemo();
+    const block = document.querySelector('button[aria-label="Discard Summary draft"]')?.closest('.edit-block');
+    if (!block) throw new Error('No recovered Summary draft on screen. Run liveTypeDraft(), reload, then this.');
+    check('precondition: the draft is pending', pendingDrafts()?.[0]?.value === typed);
+
+    buttonByText(block, 'Discard draft and use the last saved version').click();
+    await waitFor(() => !block.querySelector('.editor'), 'the editor to close');
+
+    check('the pending draft is gone from the store', pendingDrafts() === null);
+    check('and gone from storage, not left stale', storedDrafts() === null);
+    check('the resume is the last SAVED version', liveState().tailoredResume.summary === saved);
+    check('the block shows the saved text again', block.innerText.includes(saved.slice(0, 40)));
+    check('the page banner is gone', !document.querySelector('.editor-recovered'));
+    check('the draft marker is nowhere on the page', !document.body.innerText.includes('DRAFT-MARKER'));
+
+    // Cancel is the same explicit "no", and must not leave a draft behind.
+    const reopened = await openSummary();
+    setValue(reopened.querySelector('textarea[name="summary"]'), `${saved} CANCEL-MARKER`);
+    await waitForAutosave();
+    check('a fresh draft autosaved', pendingDrafts()?.[0]?.value.includes('CANCEL-MARKER'));
+    buttonByText(reopened, 'Cancel').click();
+    await waitFor(() => !reopened.querySelector('.editor'), 'the editor to close');
+    check('Cancel discards the stored draft too, so it cannot come back', pendingDrafts() === null && storedDrafts() === null);
+    check('Cancel left the saved resume alone', liveState().tailoredResume.summary === saved);
+  } catch (err) {
+    check(err.message, false);
+  }
+  return finishDraft('Next: await liveDraftClearedByNewPass().');
+}
+
+/**
+ * Step 4: a completed tailoring pass clears a stale pending draft rather than
+ * trying to reconcile it.
+ *
+ * The pass is stubbed through the dev dispatch handle -- the very same
+ * SET_TAILORED_RESUME payload Tailor.run dispatches, stamped with the live
+ * parsedJD -- so it needs no key and makes no AI call. What is under test is
+ * what the reducer does with the draft, not what the model writes.
+ */
+export async function liveDraftClearedByNewPass() {
+  failed = 0;
+  console.group('tailorEditor - live draft 4: a new pass clears a stale draft');
+  try {
+    const { ACTIONS } = await import('../../context/AppContext.jsx');
+    const dispatch = window.a2resumeDev?.dispatch;
+    if (typeof dispatch !== 'function') throw new Error('window.a2resumeDev.dispatch is missing. Run this against the dev server.');
+    const before = liveState();
+    if (!before.tailoredResume) throw new Error('Open /tailor on a session with a tailoring pass.');
+
+    const block = await openSummary();
+    setValue(block.querySelector('textarea[name="summary"]'), `${before.tailoredResume.summary} STALE-DRAFT-MARKER`);
+    await waitForAutosave();
+    check('a draft is pending against the current pass', pendingDrafts()?.[0]?.value.includes('STALE-DRAFT-MARKER'));
+
+    const replacement = { ...before.tailoredResume, summary: 'A completely rewritten summary from the new tailoring pass.' };
+    dispatch({
+      type: ACTIONS.SET_TAILORED_RESUME,
+      payload: { resume: replacement, changesLog: [], corrections: [], parsedJD: before.parsedJD },
+    });
+    await waitFor(() => liveState().tailoredResume?.summary === replacement.summary, 'the new pass to land');
+
+    check('the stale draft is gone from the store', pendingDrafts() === null);
+    check('and gone from storage', storedDrafts() === null);
+    check('it did not resurrect against the new pass', !liveState().tailoredResume.summary.includes('STALE-DRAFT-MARKER'));
+    check('no block reopened claiming a recovered draft', !document.querySelector('.edit-block__draft'));
+    check('no recovery banner appeared', !document.querySelector('.editor-recovered'));
+    check('the hand-edit log was cleared with the pass, as before', liveState().tailorManualEdits === null);
+
+    // Put the summary back so the session is left as it was found.
+    dispatch({
+      type: ACTIONS.SET_TAILORED_RESUME,
+      payload: { resume: before.tailoredResume, changesLog: before.changesLog ?? [], corrections: before.tailorCorrections ?? [], parsedJD: before.parsedJD },
+    });
+    await waitFor(() => liveState().tailoredResume?.summary === before.tailoredResume.summary, 'the original summary to return');
+    check('the original tailored summary was restored', liveState().tailoredResume.summary === before.tailoredResume.summary);
+  } catch (err) {
+    check(err.message, false);
+  }
+  return finishDraft('Done. The draft runners leave no pending draft behind.');
+}
+
+export default {
+  testOffline,
+  testDraftsOffline,
+  testReducer,
+  liveEditBullet,
+  verifyBulletSurvived,
+  verifyExportShowsBullet,
+  liveLinkRoundTrip,
+  liveToggleCurrent,
+  liveTypeDraft,
+  verifyDraftRecovered,
+  liveDiscardRecoveredDraft,
+  liveDraftClearedByNewPass,
+};

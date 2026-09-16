@@ -320,3 +320,109 @@ export function describeManualEdits(edits) {
     .filter((e) => isPlainObject(e) && typeof e.label === 'string' && e.label.trim())
     .map((e) => e.label);
 }
+
+// ---------------------------------------------------------------------------
+// Pending drafts -- editor content typed but not yet saved
+// ---------------------------------------------------------------------------
+
+/**
+ * A draft is what is in an open editor block right now. It is NOT part of the
+ * resume: nothing reads it for Export, and nothing scores it. It exists only
+ * so that a crash or a reload does not silently throw away typing.
+ *
+ * Stored as a list rather than a single slot because the editor genuinely
+ * allows several blocks to be open at once -- every EditableBlock keeps its
+ * own state and nothing closes the others. A single slot would silently drop
+ * every draft but the newest, which is the exact failure this prevents.
+ * Same shape and same replace-or-append rule as `tailorManualEdits`.
+ */
+
+/**
+ * How long after the last keystroke a draft is written. Long enough that a
+ * burst of typing is one write rather than one per character, short enough
+ * that little is lost if the tab dies mid-sentence. Lives here, not in the
+ * component, so the manual test waits exactly as long as the editor does.
+ */
+export const DRAFT_AUTOSAVE_MS = 1500;
+
+/** Stable identity for one editable block. List sections are addressed by index. */
+export function draftKey(section, index) {
+  return LIST_SECTIONS.includes(section) ? `${section}:${index}` : section;
+}
+
+/** Whether `section`/`index` names a block that can hold a draft at all. */
+export function isDraftAddress(section, index) {
+  if (!EDITABLE_SECTIONS.includes(section)) return false;
+  return LIST_SECTIONS.includes(section) ? Number.isInteger(index) && index >= 0 : index === null || index === undefined;
+}
+
+/**
+ * The saved value of one block as a draft, or undefined when the block does
+ * not exist on this resume (an index past the end of a shortened list).
+ * This is what a pending draft is compared against to decide whether it holds
+ * anything the user would miss.
+ */
+export function committedDraft(section, index, tailored) {
+  if (!isPlainObject(tailored) || !isDraftAddress(section, index)) return undefined;
+  if (section === 'header') return toDraft('header', tailored);
+  if (section === 'summary') return toDraft('summary', tailored.summary);
+  if (section === 'skills') return toDraft('skills', tailored.skills);
+  const list = asArray(tailored[section]);
+  if (index >= list.length) return undefined;
+  return toDraft(section, list[index]);
+}
+
+/**
+ * `drafts` with this block's draft recorded. Returns the very same array when
+ * the stored draft is already identical, so an autosave tick that repeats
+ * itself changes no state and therefore writes no storage.
+ */
+export function putPendingDraft(drafts, { section, index = null, value }) {
+  const list = asArray(drafts).filter(isPlainObject);
+  if (!isDraftAddress(section, index)) return drafts;
+  const at = index ?? null;
+  const existing = list.find((d) => d.section === section && (d.index ?? null) === at);
+  if (existing && same(existing.value, value)) return drafts;
+  const kept = list.filter((d) => !(d.section === section && (d.index ?? null) === at));
+  return [...kept, { section, index: at, value }];
+}
+
+/**
+ * `drafts` without this block's draft.
+ *
+ * Returns the argument itself -- same reference, null included -- when there
+ * was nothing to drop. Callers use that identity to decide whether anything
+ * changed, and a reducer that returned a fresh object for a no-op would make
+ * a no-op save look like a real one.
+ */
+export function dropPendingDraft(drafts, section, index = null) {
+  const list = asArray(drafts);
+  const at = index ?? null;
+  const kept = list.filter((d) => !(isPlainObject(d) && d.section === section && (d.index ?? null) === at));
+  return kept.length === list.length ? drafts : kept;
+}
+
+/**
+ * The drafts worth offering back: a real address on this resume, and content
+ * that actually differs from what is saved there. A draft equal to the saved
+ * value is dropped rather than surfaced -- nothing was lost, so re-opening the
+ * block and calling it unsaved would be a lie.
+ *
+ * @returns {{ section: string, index: number | null, key: string, label: string, value: unknown }[]}
+ */
+export function recoverableDrafts(drafts, tailored) {
+  const out = [];
+  for (const draft of asArray(drafts)) {
+    if (!isPlainObject(draft)) continue;
+    const { section, value } = draft;
+    const index = draft.index ?? null;
+    const committed = committedDraft(section, index, tailored);
+    if (committed === undefined || same(committed, value)) continue;
+    const label =
+      index === null
+        ? SECTION_LABELS[section]
+        : `${SECTION_LABELS[section]}: ${describeEntry(section, asArray(asObject(tailored)[section])[index])}`;
+    out.push({ section, index, key: draftKey(section, index), label, value });
+  }
+  return out;
+}

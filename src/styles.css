@@ -1159,3 +1159,27 @@ a.button {
   border-radius: 8px;
   box-sizing: border-box;
 }
+
+/* Recovered unsaved drafts: the page-level summary, and the per-block banner
+   inside an open editor. Both use .notice--warn so they read as "attention,
+   not an error" like every other warning in the app. */
+.editor-recovered {
+  margin-bottom: 1rem;
+}
+
+.edit-block__draft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+
+.edit-block__draft > span {
+  flex: 1 1 16rem;
+}
+
+.edit-block__draft button {
+  flex: 0 0 auto;
+}

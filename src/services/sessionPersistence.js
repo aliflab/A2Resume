@@ -39,6 +39,17 @@
  *   new envelopes read correctly in both directions, so SESSION_VERSION is
  *   unchanged.
  *
+ * PENDING DRAFTS ARE STORED, BUT THEY ARE NOT THE RESUME
+ * `draftEdits` is editor content typed and not yet saved. It rides this same
+ * envelope rather than a second storage key, and is validated like any other
+ * field: a wrong-typed one is dropped on its own and the session still loads.
+ * Nothing downstream reads it -- Export prints `tailoredResume` and the scorer
+ * scores it, both untouched by a pending draft. It is deliberately NOT an
+ * ARTEFACT_FIELD: a draft is never the only thing in a session, so it must not
+ * be what keeps an otherwise-empty session alive in storage. It is cleared
+ * whenever the content it edits stops existing (a new pass, a discard, a new
+ * Input run) and when its block is saved, so it never lingers once spent.
+ *
  * THE BASELINE SCORE IS STORED ONCE TOO
  * `originalGapAnalysis` / `originalAtsScore` are the Input run's score, kept as
  * a permanent "before tailoring" baseline while `gapAnalysis` / `atsScore`
@@ -85,6 +96,7 @@ const PERSISTED_FIELDS = {
   changesLog: 'array',
   tailorCorrections: 'array',
   tailorManualEdits: 'array',
+  draftEdits: 'array',
   sources: 'flat',
   settings: 'flat',
 };

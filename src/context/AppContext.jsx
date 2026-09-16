@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer 
 
 import { recoverBaseline, rescoreCurrentResume } from '../services/currentResume.js';
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
-import { applyTailoredEdit, recordManualEdit } from '../services/tailoredEdits.js';
+import { applyTailoredEdit, dropPendingDraft, isDraftAddress, putPendingDraft, recordManualEdit } from '../services/tailoredEdits.js';
 
 /**
  * The single global store for the app. useReducer + Context only --
@@ -64,6 +64,17 @@ export const initialState = {
   tailorManualEdits: null,
 
   /**
+   * Editor content typed but not yet saved: `[{ section, index, value }]`,
+   * null when nothing is open. Autosaved on a debounce so a crash or a reload
+   * does not silently lose typing -- see tailoredEdits.js.
+   *
+   * A draft is explicitly NOT part of the resume. Export never prints it and
+   * the scorer never sees it; only UPDATE_TAILORED_SECTION (Save) moves
+   * content into `tailoredResume`, and only that triggers a rescore.
+   */
+  draftEdits: null,
+
+  /**
    * Where each artefact came from, for display and for deciding whether a
    * re-run is cheap. Not load-bearing -- nothing branches on it.
    */
@@ -119,6 +130,10 @@ export const ACTIONS = {
   CLEAR_TAILORING: 'clear_tailoring',
   /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
   UPDATE_TAILORED_SECTION: 'update_tailored_section',
+  /** Autosave one open editor block's unsaved content. Payload `{ section, index, value }`. */
+  SET_DRAFT_EDIT: 'set_draft_edit',
+  /** Throw one pending draft away. Payload `{ section, index }`. */
+  DISCARD_DRAFT_EDIT: 'discard_draft_edit',
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
@@ -243,12 +258,17 @@ function reduce(state, action) {
         // A fresh pass carries no hand edits. Tailor only offers a new pass
         // after a discard, and the discard asks first when edits exist.
         tailorManualEdits: null,
+        // A draft is a delta against the text the pass just replaced. Carrying
+        // it over would silently overwrite the model's new wording with words
+        // typed against the old, so a pending draft dies with the pass it
+        // belonged to -- the same rule tailorManualEdits already follows.
+        draftEdits: null,
       };
     }
 
     // Discard a tailoring pass without touching the analysis behind it.
     case ACTIONS.CLEAR_TAILORING:
-      return { ...state, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null };
+      return { ...state, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null, draftEdits: null };
 
     // One section or one entry, never the whole resume. Invalid and no-op
     // edits return null from applyTailoredEdit and leave state untouched, so
@@ -256,13 +276,45 @@ function reduce(state, action) {
     // tailoring pass there is nothing to edit (the same rule as a pass that
     // lands after "Start over").
     case ACTIONS.UPDATE_TAILORED_SECTION: {
+      const { section, index } = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      // Saving ends that block's draft whether or not the save changed
+      // anything. A no-op save still closes the editor, and a draft left
+      // behind would reopen it on the next load claiming to be unsaved work.
+      const remaining = dropPendingDraft(state.draftEdits, section, index ?? null);
+      const dropped = remaining !== state.draftEdits;
+      // Emptied means gone, not an empty array: a spent draft must leave
+      // nothing behind in storage to measure or to misread on the next load.
+      const draftEdits = dropped ? (remaining.length > 0 ? remaining : null) : state.draftEdits;
+
       const result = applyTailoredEdit(state.tailoredResume, action.payload);
-      if (!result) return state;
+      if (!result) return dropped ? { ...state, draftEdits } : state;
       return {
         ...state,
         tailoredResume: result.resume,
         tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
+        draftEdits,
       };
+    }
+
+    // Autosave. Deliberately absent from RESCORING_ACTIONS: a draft is not yet
+    // part of the current resume, so it must not move the score. Only the Save
+    // above does that. Requires a tailoring pass -- there is nothing to draft
+    // against otherwise -- and an address that names a real editable block, so
+    // a malformed dispatch cannot park junk in storage.
+    case ACTIONS.SET_DRAFT_EDIT: {
+      const { section, index = null, value } = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      if (!state.tailoredResume || !isDraftAddress(section, index)) return state;
+      const draftEdits = putPendingDraft(state.draftEdits, { section, index, value });
+      // Identical to what is already stored: no state change, so no write.
+      // This is what stops a repeated autosave tick from hammering storage.
+      return draftEdits === state.draftEdits ? state : { ...state, draftEdits };
+    }
+
+    case ACTIONS.DISCARD_DRAFT_EDIT: {
+      const { section, index = null } = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      const remaining = dropPendingDraft(state.draftEdits, section, index);
+      if (remaining === state.draftEdits) return state;
+      return { ...state, draftEdits: remaining.length > 0 ? remaining : null };
     }
 
     case ACTIONS.SET_SOURCES:
@@ -333,6 +385,7 @@ function reduce(state, action) {
         changesLog: null,
         tailorCorrections: null,
         tailorManualEdits: null,
+        draftEdits: null,
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
@@ -395,12 +448,16 @@ export function AppProvider({ children }) {
     changesLog,
     tailorCorrections,
     tailorManualEdits,
+    draftEdits,
     sources,
     settings,
   } = state;
 
   // Persist after every change to the pipeline slice -- each completed stage,
-  // a tailoring result, a hand edit, merged skills, a reset. `ui` is
+  // a tailoring result, a hand edit, an autosaved draft, merged skills, a
+  // reset. Drafts ride this same write rather than a second storage
+  // mechanism; the debounce lives in the editor, so one write per pause in
+  // typing reaches here, not one per keystroke. `ui` is
   // deliberately not a dependency, so stage ticks and spinners never trigger a
   // write. A rescore happens inside the same reducer transition as the change
   // that caused it, so the resume and its score are always written together.
@@ -418,17 +475,20 @@ export function AppProvider({ children }) {
       changesLog,
       tailorCorrections,
       tailorManualEdits,
+      draftEdits,
       sources,
       settings,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, sources, settings]);
 
-  // Dev-only read handle for __manual__/session.manual.js, which has to compare
-  // the live store against storage across a reload. Stripped from production
-  // builds by the import.meta.env.DEV check.
+  // Dev-only handle for the __manual__ runners, which have to compare the live
+  // store against storage across a reload, and to stand in for an action the
+  // page would otherwise only reach through a paid AI call. Stripped from
+  // production builds by the import.meta.env.DEV check -- assert 0 occurrences
+  // in dist/ if you touch this.
   useEffect(() => {
-    if (import.meta.env.DEV) window.a2resumeDev = { getState: () => state };
-  }, [state]);
+    if (import.meta.env.DEV) window.a2resumeDev = { getState: () => state, dispatch };
+  }, [state, dispatch]);
 
   /** "Start over": delete the stored session, then empty the store. API keys are untouched. */
   const resetSession = useCallback(() => {

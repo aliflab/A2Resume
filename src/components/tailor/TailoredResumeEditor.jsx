@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 import { ACTIONS, useApp } from '../../context/AppContext.jsx';
 import {
@@ -10,7 +10,15 @@ import {
   roleHeading,
   skillLine,
 } from '../../services/resumeExport.js';
-import { SECTION_LABELS, describeEntry, toDraft, toggleCurrentlyWorking } from '../../services/tailoredEdits.js';
+import {
+  DRAFT_AUTOSAVE_MS,
+  SECTION_LABELS,
+  describeEntry,
+  draftKey,
+  recoverableDrafts,
+  toDraft,
+  toggleCurrentlyWorking,
+} from '../../services/tailoredEdits.js';
 
 /**
  * The hand-editing surface for the tailored resume on step 3.
@@ -24,8 +32,13 @@ import { SECTION_LABELS, describeEntry, toDraft, toggleCurrentlyWorking } from '
  * Read-only views are built with Export's own normaliser and line builders, so
  * what a block shows is what the PDF and the plain-text copy will print.
  *
- * Unsaved drafts live in component state and are lost on reload or when
- * leaving the page. Saved edits persist with the rest of the session.
+ * An open block's unsaved content is autosaved to the session on a debounce
+ * (DRAFT_AUTOSAVE_MS after typing stops), so a crash or a reload does not
+ * throw it away. It is stored as `draftEdits`, kept apart from the resume
+ * itself: it is never printed, never scored, and never merged until Save.
+ * On load a draft that differs from what is saved reopens its block, labelled
+ * as recovered and unsaved, with a control to throw it away instead. Saving,
+ * cancelling, a new tailoring pass and a new Input run all end a draft.
  *
  * Entries can be edited but not added or removed here: the tailoring merge is
  * built never to lose an entry, and a delete button on a real role is a much
@@ -33,15 +46,38 @@ import { SECTION_LABELS, describeEntry, toDraft, toggleCurrentlyWorking } from '
  * out.
  */
 export default function TailoredResumeEditor({ resume }) {
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
   const save = (section, index) => (value) =>
     dispatch({ type: ACTIONS.UPDATE_TAILORED_SECTION, payload: { section, index, value } });
+
+  // Frozen at mount on purpose. These are the drafts that were already in the
+  // session when this page loaded, which is exactly what "recovered from
+  // before the reload" means. Recomputing it would make every block the user
+  // opens and types in claim to be recovered a second and a half later.
+  const [recovered] = useState(() => new Map(recoverableDrafts(state.draftEdits, resume).map((d) => [d.key, d])));
+  const draftOf = (section, index = null) => recovered.get(draftKey(section, index))?.value;
+
+  // Which of those are still unresolved, so the banner disappears as they are
+  // saved or discarded rather than lingering as a claim about the past.
+  const pending = new Set(
+    (Array.isArray(state.draftEdits) ? state.draftEdits : []).map((d) => draftKey(d?.section, d?.index ?? null))
+  );
+  const outstanding = [...recovered.values()].filter((d) => pending.has(d.key));
 
   const normalised = normalizeResumeForExport(resume);
   const list = (section) => (Array.isArray(resume?.[section]) ? resume[section] : []);
 
   return (
     <>
+      {outstanding.length > 0 && (
+        <p className="notice notice--warn editor-recovered">
+          <strong>Unsaved {outstanding.length === 1 ? 'draft' : 'drafts'} recovered.</strong> You were editing{' '}
+          {outstanding.map((d) => d.label).join(', ')} when the page last closed. {outstanding.length === 1 ? 'It is' : 'They are'}{' '}
+          reopened below and <strong>not saved yet</strong> -- Save to keep {outstanding.length === 1 ? 'it' : 'them'}, or discard to
+          go back to the last saved version.
+        </p>
+      )}
+
       <section className="card editor-card">
         <h2>Your tailored resume</h2>
         <p className="muted editor-card__intro">
@@ -50,6 +86,8 @@ export default function TailoredResumeEditor({ resume }) {
         </p>
 
         <EditableBlock
+          section="header"
+          recovered={draftOf('header')}
           title={SECTION_LABELS.header}
           editLabel="Edit header"
           makeDraft={() => toDraft('header', resume)}
@@ -67,6 +105,8 @@ export default function TailoredResumeEditor({ resume }) {
         </EditableBlock>
 
         <EditableBlock
+          section="summary"
+          recovered={draftOf('summary')}
           title={SECTION_LABELS.summary}
           editLabel="Edit summary"
           makeDraft={() => toDraft('summary', resume?.summary)}
@@ -77,6 +117,8 @@ export default function TailoredResumeEditor({ resume }) {
         </EditableBlock>
 
         <EditableBlock
+          section="skills"
+          recovered={draftOf('skills')}
           title={SECTION_LABELS.skills}
           editLabel="Edit skills"
           makeDraft={() => toDraft('skills', resume?.skills)}
@@ -95,13 +137,14 @@ export default function TailoredResumeEditor({ resume }) {
         </EditableBlock>
       </section>
 
-      <EntrySection section="experience" entries={list('experience')} save={save} Form={ExperienceForm} View={ExperienceView} />
-      <EntrySection section="projects" entries={list('projects')} save={save} Form={ProjectForm} View={ProjectView} />
-      <EntrySection section="education" entries={list('education')} save={save} Form={EducationForm} View={EducationView} />
+      <EntrySection section="experience" entries={list('experience')} save={save} draftOf={draftOf} Form={ExperienceForm} View={ExperienceView} />
+      <EntrySection section="projects" entries={list('projects')} save={save} draftOf={draftOf} Form={ProjectForm} View={ProjectView} />
+      <EntrySection section="education" entries={list('education')} save={save} draftOf={draftOf} Form={EducationForm} View={EducationView} />
       <EntrySection
         section="certifications"
         entries={list('certifications')}
         save={save}
+        draftOf={draftOf}
         Form={CertificationForm}
         View={CertificationView}
       />
@@ -110,7 +153,7 @@ export default function TailoredResumeEditor({ resume }) {
 }
 
 /** One card per list section, one block per entry, addressed by index. */
-function EntrySection({ section, entries, save, Form, View }) {
+function EntrySection({ section, entries, save, draftOf, Form, View }) {
   const noun = section === 'certifications' ? 'certification' : section === 'education' ? 'education' : section.replace(/s$/, '');
   return (
     <section className="card editor-card">
@@ -123,6 +166,9 @@ function EntrySection({ section, entries, save, Form, View }) {
             // Index keys are safe: entries are never added, removed or
             // reordered from this editor.
             key={index}
+            section={section}
+            index={index}
+            recovered={draftOf(section, index)}
             title={describeEntry(section, entry)}
             editLabel={`Edit ${noun} ${index + 1}`}
             makeDraft={() => toDraft(section, entry)}
@@ -137,9 +183,37 @@ function EntrySection({ section, entries, save, Form, View }) {
   );
 }
 
-function EditableBlock({ title, editLabel, makeDraft, Form, onSave, children }) {
-  const [draft, setDraft] = useState(null);
+function EditableBlock({ section, index = null, title, editLabel, makeDraft, Form, onSave, recovered, children }) {
+  const { dispatch } = useApp();
+  // A recovered draft opens the block straight away: the content is the point,
+  // and hiding it behind an Edit click would look like it had been lost.
+  const [draft, setDraft] = useState(() => (recovered === undefined ? null : recovered));
+  const [fromRecovery, setFromRecovery] = useState(recovered !== undefined);
   const editing = draft !== null;
+
+  // Autosave. The cleanup cancels the pending write whenever the draft changes
+  // again or the block closes, so a save or a cancel one keystroke before the
+  // timer fires can never be followed by the draft landing anyway.
+  useEffect(() => {
+    if (draft === null) return undefined;
+    const timer = setTimeout(() => {
+      dispatch({ type: ACTIONS.SET_DRAFT_EDIT, payload: { section, index, value: draft } });
+    }, DRAFT_AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+  }, [draft, dispatch, section, index]);
+
+  const close = () => {
+    setDraft(null);
+    setFromRecovery(false);
+  };
+
+  // Cancel and "discard draft" are the same act: an explicit "I do not want
+  // this". Keeping a cancelled draft recoverable would mean Cancel did not
+  // cancel, and it would reappear on the next load.
+  const discard = () => {
+    dispatch({ type: ACTIONS.DISCARD_DRAFT_EDIT, payload: { section, index } });
+    close();
+  };
 
   return (
     <div className={`edit-block${editing ? ' edit-block--editing' : ''}`}>
@@ -154,6 +228,16 @@ function EditableBlock({ title, editLabel, makeDraft, Form, onSave, children }) 
 
       {editing ? (
         <div className="editor">
+          {fromRecovery && (
+            <p className="notice notice--warn edit-block__draft">
+              <span>
+                <strong>Unsaved draft.</strong> Recovered from before the page reloaded -- this is not your last saved version.
+              </span>
+              <button type="button" onClick={discard} aria-label={`Discard ${title} draft`}>
+                Discard draft and use the last saved version
+              </button>
+            </p>
+          )}
           <Form draft={draft} setDraft={setDraft} />
           <div className="actions">
             <button
@@ -161,12 +245,12 @@ function EditableBlock({ title, editLabel, makeDraft, Form, onSave, children }) 
               className="button button--primary"
               onClick={() => {
                 onSave(draft);
-                setDraft(null);
+                close();
               }}
             >
               Save
             </button>
-            <button type="button" onClick={() => setDraft(null)}>
+            <button type="button" onClick={discard}>
               Cancel
             </button>
           </div>

@@ -347,6 +347,22 @@ export async function testScenario() {
     const jdTyped = run(edited2, 'SET_JOB_DESCRIPTION', 'a different posting, typed but not run');
     check('JD text alone changes no parsed JD, tailoring or score', jdTyped.parsedJD === edited2.parsedJD && jdTyped.tailoredResume === edited2.tailoredResume && jdTyped.atsScore === edited2.atsScore);
 
+    // A pending draft is typing, not a resume. Nothing about it may reach the
+    // score; only the Save that commits it does. The loop below asserts the
+    // invariant for every action, but this is the case the feature turns on.
+    const drafted = run(edited2, 'SET_DRAFT_EDIT', { section: 'summary', value: `${edited2.tailoredResume.summary} Terraform, Kubernetes, gRPC.` });
+    check('a pending draft is stored', Array.isArray(drafted.draftEdits) && drafted.draftEdits.length === 1);
+    check('a pending draft does NOT rescore: same score objects', drafted.atsScore === edited2.atsScore && drafted.gapAnalysis === edited2.gapAnalysis);
+    check('a pending draft does NOT touch the resume Export prints', drafted.tailoredResume === edited2.tailoredResume);
+    check('a pending draft is not a hand edit', drafted.tailorManualEdits === edited2.tailorManualEdits);
+    const committed = run(drafted, 'UPDATE_TAILORED_SECTION', { section: 'summary', value: drafted.draftEdits[0].value });
+    check('committing that same draft DOES rescore', committed.atsScore !== drafted.atsScore && consistent(committed));
+    check('committing clears the draft it came from', committed.draftEdits === null);
+    check('discarding a draft rescores nothing and leaves the resume alone', (() => {
+      const d = run(drafted, 'DISCARD_DRAFT_EDIT', { section: 'summary' });
+      return d.draftEdits === null && d.atsScore === edited2.atsScore && d.tailoredResume === edited2.tailoredResume;
+    })());
+
     // --- 8. Every action keeps score and resume in step ------------------------
     console.log('8. Invariant across every action');
     check('RESCORING_ACTIONS all name real actions', RESCORING_ACTIONS.every((name) => name in ACTIONS));
@@ -364,6 +380,8 @@ export async function testScenario() {
       SET_STAGE: null,
       SET_ERROR: null,
       MERGE_INFERRED_SKILLS: ['Airflow'],
+      SET_DRAFT_EDIT: { section: 'summary', value: 'Typed but not saved. Kubernetes, gRPC, Terraform.' },
+      DISCARD_DRAFT_EDIT: { section: 'summary' },
       CLEAR_ANALYSIS: undefined,
     };
     for (const name of Object.keys(ACTIONS)) {
