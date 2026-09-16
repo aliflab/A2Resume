@@ -38,6 +38,23 @@
  *   with one shared object, so its next save is already deduplicated. Old and
  *   new envelopes read correctly in both directions, so SESSION_VERSION is
  *   unchanged.
+ *
+ * THE BASELINE SCORE IS STORED ONCE TOO
+ * `originalGapAnalysis` / `originalAtsScore` are the Input run's score, kept as
+ * a permanent "before tailoring" baseline while `gapAnalysis` / `atsScore`
+ * track the current resume. Until something changes the resume the two pairs
+ * are the very same objects (the reducer, via rescoreCurrentResume, reuses the
+ * baseline objects whenever a rescore lands back on an identical result), so:
+ * - Same objects -> the original pair is omitted and `originalScoreSharesCurrent`
+ *   is set; loadSession points the original fields at the restored current ones.
+ * - Different objects -> the original pair is written, with its own embedded
+ *   gap analysis stripped under `originalAtsScoreSharesGapAnalysis`, by the same
+ *   identity rule as the current pair.
+ * - An envelope with no `originalScoreSharesCurrent` key at all was written
+ *   before baselines existed. Its stored score was computed against the
+ *   original resume (it never tracked tailoring), so it is adopted as the
+ *   baseline. AppContext's hydrate then rescores the current resume.
+ * Old envelopes still read correctly, so SESSION_VERSION is unchanged.
  */
 
 import { get, remove, set } from './storageService.js';
@@ -62,6 +79,8 @@ const PERSISTED_FIELDS = {
   parsedJD: 'object',
   gapAnalysis: 'object',
   atsScore: 'object',
+  originalGapAnalysis: 'object',
+  originalAtsScore: 'object',
   tailoredResume: 'object',
   changesLog: 'array',
   tailorCorrections: 'array',
@@ -73,7 +92,18 @@ const PERSISTED_FIELDS = {
 export const PERSISTED_FIELD_NAMES = Object.keys(PERSISTED_FIELDS);
 
 /** Fields whose presence means a pipeline step actually produced something. */
-const ARTEFACT_FIELDS = ['resume', 'parsedJD', 'gapAnalysis', 'atsScore', 'tailoredResume', 'changesLog', 'tailorCorrections', 'tailorManualEdits'];
+const ARTEFACT_FIELDS = [
+  'resume',
+  'parsedJD',
+  'gapAnalysis',
+  'atsScore',
+  'originalGapAnalysis',
+  'originalAtsScore',
+  'tailoredResume',
+  'changesLog',
+  'tailorCorrections',
+  'tailorManualEdits',
+];
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -109,18 +139,44 @@ export function pickSessionSlice(state) {
   return slice;
 }
 
+/** `state` with `state[scoreKey].gapAnalysis` removed when it is the very object at `state[gapKey]`. */
+function stripEmbeddedGap(state, scoreKey, gapKey) {
+  const score = state[scoreKey];
+  const gap = state[gapKey];
+  if (!isPlainObject(score) || !isPlainObject(gap) || score.gapAnalysis !== gap) return { state, stripped: false };
+  const stored = { ...score };
+  delete stored.gapAnalysis;
+  return { state: { ...state, [scoreKey]: stored }, stripped: true };
+}
+
 /**
- * The slice as it is written: `atsScore` without the gap analysis it shares
- * with `gapAnalysis`. See "THE GAP ANALYSIS IS STORED ONCE" above.
+ * The slice as it is written, and the envelope flags that say what was left
+ * out. See "THE GAP ANALYSIS IS STORED ONCE" and "THE BASELINE SCORE IS
+ * STORED ONCE TOO" above.
  */
 function toStoredSlice(slice) {
-  const { atsScore, gapAnalysis } = slice;
-  if (!isPlainObject(atsScore) || !isPlainObject(gapAnalysis) || atsScore.gapAnalysis !== gapAnalysis) {
-    return { state: slice, atsScoreSharesGapAnalysis: false };
+  let state = slice;
+  const originalScoreSharesCurrent =
+    isPlainObject(slice.atsScore) &&
+    isPlainObject(slice.gapAnalysis) &&
+    slice.originalAtsScore === slice.atsScore &&
+    slice.originalGapAnalysis === slice.gapAnalysis;
+  if (originalScoreSharesCurrent) {
+    state = { ...state };
+    delete state.originalGapAnalysis;
+    delete state.originalAtsScore;
   }
-  const stored = { ...atsScore };
-  delete stored.gapAnalysis;
-  return { state: { ...slice, atsScore: stored }, atsScoreSharesGapAnalysis: true };
+
+  const current = stripEmbeddedGap(state, 'atsScore', 'gapAnalysis');
+  const original = stripEmbeddedGap(current.state, 'originalAtsScore', 'originalGapAnalysis');
+  return {
+    state: original.state,
+    flags: {
+      atsScoreSharesGapAnalysis: current.stripped,
+      originalScoreSharesCurrent,
+      originalAtsScoreSharesGapAnalysis: original.stripped,
+    },
+  };
 }
 
 /**
@@ -182,7 +238,7 @@ export function saveSession(state) {
     set(SESSION_STORAGE_NAME, {
       version: SESSION_VERSION,
       savedAt: new Date().toISOString(),
-      atsScoreSharesGapAnalysis: stored.atsScoreSharesGapAnalysis,
+      ...stored.flags,
       state: stored.state,
     });
     report({ ok: true, error: null, message: null });
@@ -217,27 +273,48 @@ export function loadSession() {
     return { state: null, reason: 'incompatible' };
   }
 
-  const restored = {};
+  const values = {};
   const dropped = [];
   for (const [field, kind] of Object.entries(PERSISTED_FIELDS)) {
     if (!(field in envelope.state)) continue;
     const accepted = acceptField(kind, envelope.state[field]);
-    if (accepted.ok) restored[field] = accepted.value;
+    if (accepted.ok) values[field] = accepted.value;
     else dropped.push(field);
   }
 
   // Re-attach the gap analysis to the score it was stripped from. Only when
   // both survived validation; a dropped gapAnalysis leaves the score without
   // one, which readers already tolerate (they fall back to state.gapAnalysis).
-  const { atsScore, gapAnalysis } = restored;
+  const { atsScore, gapAnalysis } = values;
   if (isPlainObject(atsScore) && isPlainObject(gapAnalysis)) {
     const stripped = envelope.atsScoreSharesGapAnalysis === true;
     // Written before deduplication: two equal copies. Share one object so the
     // next save writes it once. Spreading keeps the key where it was.
     const equalCopy =
       !stripped && isPlainObject(atsScore.gapAnalysis) && JSON.stringify(atsScore.gapAnalysis) === JSON.stringify(gapAnalysis);
-    if (stripped || equalCopy) restored.atsScore = { ...atsScore, gapAnalysis };
+    if (stripped || equalCopy) values.atsScore = { ...atsScore, gapAnalysis };
   }
+
+  // The baseline. Shared with the current pair, or written before baselines
+  // existed (no flag at all): point it at the restored current objects. A
+  // baseline actually present in storage is never overridden.
+  const legacyBaseline = !('originalScoreSharesCurrent' in envelope);
+  const hasStoredBaseline = 'originalGapAnalysis' in envelope.state || 'originalAtsScore' in envelope.state;
+  if ((envelope.originalScoreSharesCurrent === true || legacyBaseline) && !hasStoredBaseline) {
+    if ('gapAnalysis' in values) values.originalGapAnalysis = values.gapAnalysis;
+    if ('atsScore' in values) values.originalAtsScore = values.atsScore;
+  } else if (
+    envelope.originalAtsScoreSharesGapAnalysis === true &&
+    isPlainObject(values.originalAtsScore) &&
+    isPlainObject(values.originalGapAnalysis)
+  ) {
+    values.originalAtsScore = { ...values.originalAtsScore, gapAnalysis: values.originalGapAnalysis };
+  }
+
+  // Rebuilt in field order, so a restored state serialises exactly like the
+  // one that was saved, whichever fields were re-attached above.
+  const restored = {};
+  for (const field of PERSISTED_FIELD_NAMES) if (field in values) restored[field] = values[field];
 
   return {
     state: restored,
@@ -260,16 +337,17 @@ export function clearSession() {
 /**
  * Serialized size of a state's persisted slice, in UTF-16 code units (what
  * browsers count against the quota), total and per field. Measures what
- * saveSession actually writes, so `atsScore` excludes the shared gap analysis.
+ * saveSession actually writes, so `atsScore` excludes the shared gap analysis
+ * and a baseline shared with the current score counts as absent (`null`, 4).
  */
 export function measureSession(state) {
-  const { state: slice, atsScoreSharesGapAnalysis } = toStoredSlice(pickSessionSlice(state));
+  const { state: slice, flags } = toStoredSlice(pickSessionSlice(state));
   const perField = {};
   for (const field of PERSISTED_FIELD_NAMES) perField[field] = JSON.stringify(slice[field] ?? null).length;
   const total = JSON.stringify({
     version: SESSION_VERSION,
     savedAt: new Date().toISOString(),
-    atsScoreSharesGapAnalysis,
+    ...flags,
     state: slice,
   }).length;
   return { total, perField, fractionOfTypicalQuota: total / TYPICAL_QUOTA_CHARS };

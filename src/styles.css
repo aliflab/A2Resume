@@ -530,6 +530,63 @@ body {
   font-weight: 400;
 }
 
+/* Before / after tailoring ------------------------------------------------ */
+
+.compare__scores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.compare__figure .score {
+  margin: 0.25rem 0 0;
+}
+
+.compare__label {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.compare__arrow {
+  font-size: 1.4rem;
+  opacity: 0.6;
+}
+
+.compare__delta {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.compare__delta--up   { color: #2e8b57; }
+.compare__delta--down { color: #c0392b; }
+
+.compare__moves {
+  margin-top: 1rem;
+}
+
+.compare__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.compare__list .muted {
+  font-size: 0.8rem;
+}
+
+.tailor__score {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+}
+
 .criteria {
   list-style: none;
   margin: 0;

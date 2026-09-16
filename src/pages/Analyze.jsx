@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
-import { useApp, ACTIONS } from '../context/AppContext.jsx';
-import { CRITERION_LABELS, calculateATSScore } from '../services/atsScorer.js';
-import { analyzeCompetencyGaps } from '../services/gapAnalyzer.js';
+import { useApp, ACTIONS, INFERRED_SKILLS_CATEGORY } from '../context/AppContext.jsx';
+import { CRITERION_LABELS } from '../services/atsScorer.js';
+import { compareScores, describeScoreChange, selectCurrentResume } from '../services/currentResume.js';
 import { inferSkillsFromExperience, shouldOfferSkillInference } from '../services/skillInference.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS } from '../services/aiService.js';
@@ -14,6 +14,11 @@ import { describeError } from '../utils/errorMessages.js';
  *
  * Reads only. The one thing that writes is the skill-inference gate, and it
  * writes only what the user has individually approved.
+ *
+ * The score shown is always the CURRENT resume's (currentResume.js): the
+ * tailored copy, hand edits included, once Tailor has run. The reducer
+ * recomputes it whenever that resume changes, so this page never has to.
+ * When a tailoring pass exists, the Input run's baseline is shown beside it.
  *
  * No route guard protects this page and it guards nothing itself -- loaded
  * cold it shows an empty state pointing back to step 1.
@@ -30,6 +35,16 @@ export default function Analyze() {
   const atsScore = state.atsScore ?? null;
   const gapAnalysis = state.gapAnalysis ?? atsScore?.gapAnalysis ?? null;
 
+  // The comparison exists only once there is something to compare: a
+  // tailoring pass. Before that, the current score IS the baseline, and the
+  // page looks exactly as it did.
+  const tailored = selectCurrentResume(state).source === 'tailored';
+  const originalScore = state.originalAtsScore ?? null;
+  const comparison = tailored
+    ? compareScores(originalScore, atsScore, state.originalGapAnalysis ?? originalScore?.gapAnalysis, gapAnalysis)
+    : null;
+  const approvedSkills = asArray(state.resume?.skills).some((g) => g?.category === INFERRED_SKILLS_CATEGORY);
+
   if (!atsScore && !gapAnalysis) return <EmptyState />;
 
   return (
@@ -43,6 +58,12 @@ export default function Analyze() {
             {state.sources.resumeFileName ? ` · ${state.sources.resumeFileName}` : ''}
           </p>
         )}
+        {tailored && (
+          <p className="muted">
+            Scored against your tailored resume from step 3, including anything you edited by hand. It updates as
+            soon as you save a change there.
+          </p>
+        )}
       </header>
 
       {atsScore?.isFallback && <FallbackBanner atsScore={atsScore} />}
@@ -50,6 +71,12 @@ export default function Analyze() {
       <SkillInferenceGate />
 
       {atsScore && <ScoreCard atsScore={atsScore} />}
+      {comparison && <ComparisonCard comparison={comparison} approvedSkills={approvedSkills} />}
+      {tailored && atsScore && !comparison && (
+        <p className="notice notice--info">
+          No before-tailoring score is saved for this session, so there is nothing to compare this one against.
+        </p>
+      )}
       {gapAnalysis && <KeywordCard gap={gapAnalysis} />}
       {atsScore && <RecommendationsCard recommendations={asArray(atsScore.recommendations)} />}
     </section>
@@ -181,6 +208,105 @@ function ScoreCard({ atsScore }) {
 }
 
 const band = (pct) => (pct >= 75 ? 'good' : pct >= 45 ? 'mid' : 'poor');
+
+// ---------------------------------------------------------------------------
+// Before and after tailoring
+// ---------------------------------------------------------------------------
+
+/**
+ * The Input run's baseline next to the current score, and which keywords
+ * changed bucket between them. Rendered only when a tailoring pass exists.
+ *
+ * Keywords that LOST coverage are shown too, not just gains: a rewrite can
+ * drop the exact wording a posting uses, and a net gain in the total would
+ * otherwise hide it.
+ */
+function ComparisonCard({ comparison, approvedSkills }) {
+  const { before, after, direction, sameScale, keywords } = comparison;
+  const change = describeScoreChange(comparison);
+
+  return (
+    <section className="card compare">
+      <h2>Before and after tailoring</h2>
+
+      <div className="compare__scores">
+        <ScoreFigure label="Before tailoring" score={before} />
+        <span className="compare__arrow" aria-hidden="true">
+          →
+        </span>
+        <ScoreFigure label="Now" score={after} />
+        <p className={`compare__delta compare__delta--${direction}`}>{change.charAt(0).toUpperCase() + change.slice(1)}</p>
+      </div>
+
+      {!sameScale && (
+        <p className="muted">
+          The two totals are out of different maximums ({before.scoreableMax} and {after.scoreableMax}): a criterion
+          that could not be measured on one resume could be on the other. So they are compared as percentages,{' '}
+          {before.percentage}% → {after.percentage}%.
+        </p>
+      )}
+      <p className="muted">
+        &ldquo;Before&rdquo; is your resume as first analysed on step 1.
+        {approvedSkills && ' Skills you approved on this page since then count toward “now”, not “before”.'}
+      </p>
+
+      <KeywordMoves
+        title="Keywords gained"
+        tone="ok"
+        moves={keywords.improved}
+        empty="No keyword moved to a better bucket."
+      />
+      {keywords.regressed.length > 0 && (
+        <KeywordMoves
+          title="Keywords lost"
+          tone="poor"
+          moves={keywords.regressed}
+          blurb="Covered better before tailoring than now. A rewrite may have dropped the wording the posting uses."
+        />
+      )}
+    </section>
+  );
+}
+
+function ScoreFigure({ label, score }) {
+  return (
+    <div className="compare__figure">
+      <p className="compare__label">{label}</p>
+      <div className="score">
+        <div className={`score__grade score__grade--${String(score.grade).toLowerCase()}`}>{score.grade}</div>
+        <p className="score__total">
+          {score.total} <span className="muted">/ {score.scoreableMax}</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function KeywordMoves({ title, tone, moves, empty, blurb }) {
+  return (
+    <div className="compare__moves">
+      <h3 className={`bucket__title bucket__title--${tone}`}>
+        {title} <span className="muted">({moves.length})</span>
+      </h3>
+      {blurb && <p className="muted bucket__blurb">{blurb}</p>}
+      {moves.length === 0 ? (
+        <p className="muted">{empty}</p>
+      ) : (
+        <ul className="compare__list">
+          {moves.map((m) => (
+            <li key={m.keyword}>
+              <span className={`chip chip--${tone}`}>{m.keyword}</span>{' '}
+              <span className="muted">
+                {m.from} → {m.to}
+                {m.priority ? ` · ${m.priority} priority` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Keywords
@@ -322,7 +448,8 @@ function RecommendationsCard({ recommendations }) {
  *
  * The gate is the point. Suggestions are proposals until the user approves
  * them one at a time; there is deliberately no accept-all. Only approved
- * skills are dispatched, and the score is re-run only afterwards, so the
+ * skills are dispatched. The reducer rescores in the same step (no AI call,
+ * no key), and the confirmation names the before and after totals, so the
  * change in the number is visibly a consequence of the user's own decisions.
  */
 function SkillInferenceGate() {
@@ -334,8 +461,7 @@ function SkillInferenceGate() {
   const [dropped, setDropped] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [merged, setMerged] = useState(null); // { count } after a merge
-  const [rescored, setRescored] = useState(false);
+  const [merged, setMerged] = useState(null); // { count, alsoTailored, scoreBefore } after a merge
 
   const provider = state.settings?.provider ?? state.sources?.provider ?? null;
   const hasKey = provider ? !!safePresence()[provider] : false;
@@ -372,23 +498,14 @@ function SkillInferenceGate() {
     dispatch({ type: ACTIONS.MERGE_INFERRED_SKILLS, payload: approved.map((s) => s.skill) });
     // The reducer adds them to an existing tailoring pass too; say so, since
     // that is the copy Export will use.
-    setMerged({ count: approved.length, alsoTailored: Boolean(state.tailoredResume) });
+    setMerged({ count: approved.length, alsoTailored: Boolean(state.tailoredResume), scoreBefore: state.atsScore ?? null });
     setSuggestions(null);
     setDecisions({});
-    setRescored(false);
-  }, [approved, dispatch, state.tailoredResume]);
-
-  // Re-run the deterministic half of the pipeline only. No AI call, no key,
-  // no re-parse -- the resume object already changed, so the score simply
-  // needs recomputing against it.
-  const rescore = useCallback(() => {
-    const gap = analyzeCompetencyGaps(state.resume, state.parsedJD);
-    dispatch({ type: ACTIONS.SET_GAP_ANALYSIS, payload: gap });
-    dispatch({ type: ACTIONS.SET_ATS_SCORE, payload: calculateATSScore(state.resume, state.parsedJD, gap) });
-    setRescored(true);
-  }, [dispatch, state.parsedJD, state.resume]);
+  }, [approved, dispatch, state.atsScore, state.tailoredResume]);
 
   if (merged) {
+    const before = merged.scoreBefore;
+    const after = state.atsScore;
     return (
       <section className="card infer">
         <h2>Skills added</h2>
@@ -397,15 +514,15 @@ function SkillInferenceGate() {
           {merged.alsoTailored && ' and to your tailored resume from step 3'}, filed under &ldquo;Inferred from
           experience&rdquo; so you can tell them apart from what you wrote yourself.
         </p>
-        {rescored ? (
-          <p className="inline-status inline-status--ok">Score updated. The numbers below now include them.</p>
-        ) : (
-          <p>
-            <button type="button" className="button button--primary" onClick={rescore}>
-              Re-run the score with these skills
-            </button>
-          </p>
-        )}
+        <p className="inline-status inline-status--ok">
+          Score recomputed
+          {typeof before?.total === 'number' && typeof after?.total === 'number' && (
+            <>
+              : {before.total} / {before.scoreableMax} → {after.total} / {after.scoreableMax}
+            </>
+          )}
+          . The numbers below include them.
+        </p>
       </section>
     );
   }

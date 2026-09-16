@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
 import TailoredResumeEditor from '../components/tailor/TailoredResumeEditor.jsx';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
+import { compareScores, describeScoreChange } from '../services/currentResume.js';
 import { describeManualEdits } from '../services/tailoredEdits.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS } from '../services/aiService.js';
@@ -48,6 +49,11 @@ export default function Tailor() {
   const changesLog = asArray(state.changesLog);
   const corrections = asArray(state.tailorCorrections);
   const edits = describeManualEdits(state.tailorManualEdits);
+  // The reducer rescores on every pass and every saved edit, so this line
+  // moves the moment Save is pressed. Analyze has the full breakdown.
+  const comparison = tailored
+    ? compareScores(state.originalAtsScore, state.atsScore, state.originalGapAnalysis, state.gapAnalysis)
+    : null;
 
   const provider = state.settings?.provider ?? state.sources?.provider ?? null;
   const hasKey = provider ? Boolean(safePresence()[provider]) : false;
@@ -62,7 +68,10 @@ export default function Tailor() {
         return;
       }
       const result = await tailorResumeWithAI(resume, parsedJD, gapAnalysis, { provider, apiKey });
-      dispatch({ type: ACTIONS.SET_TAILORED_RESUME, payload: result });
+      // Stamped with the JD it was built against. A new Input run started
+      // while this was in flight replaces parsedJD, and the reducer then
+      // refuses the pass instead of scoring it against the wrong posting.
+      dispatch({ type: ACTIONS.SET_TAILORED_RESUME, payload: { ...result, parsedJD } });
     } catch (err) {
       setError(describeError(err, { provider }));
     } finally {
@@ -131,6 +140,16 @@ export default function Tailor() {
               <p className="tailor__edits" role="status">
                 You have edited {plural(edits.length, 'part')} by hand since then: {edits.join('; ')}. Export uses your
                 edited version.
+              </p>
+            )}
+            {comparison && (
+              <p className="tailor__score" role="status">
+                ATS score: {comparison.before.total} / {comparison.before.scoreableMax} before tailoring,{' '}
+                <strong>
+                  {comparison.after.total} / {comparison.after.scoreableMax} now
+                </strong>{' '}
+                ({describeScoreChange(comparison)}). It updates each time you save an edit.{' '}
+                <Link to="/analyze">See which keywords moved</Link>.
               </p>
             )}
 

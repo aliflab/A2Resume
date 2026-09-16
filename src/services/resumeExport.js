@@ -18,6 +18,7 @@
  */
 
 import { asArray, asObject, asString } from './gapAnalyzer.js';
+import { selectCurrentResume } from './currentResume.js';
 
 const clean = (value) => asString(value).trim();
 const cleanList = (value) => asArray(value).map(clean).filter(Boolean);
@@ -36,15 +37,14 @@ const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && 
  * The tailored resume when a tailoring pass exists, otherwise the original
  * parse. Export must never assume Tailor was run.
  *
+ * This is `selectCurrentResume` (currentResume.js), the same selection the ATS
+ * score is recomputed against, so what Export prints and what Analyze scores
+ * cannot be two different resumes.
+ *
  * @param {unknown} state The AppContext state.
  * @returns {{ raw: object | null, source: 'tailored' | 'original' | null }}
  */
-export function selectExportSource(state) {
-  const s = asObject(state);
-  if (isPlainObject(s.tailoredResume)) return { raw: s.tailoredResume, source: 'tailored' };
-  if (isPlainObject(s.resume)) return { raw: s.resume, source: 'original' };
-  return { raw: null, source: null };
-}
+export const selectExportSource = selectCurrentResume;
 
 // ---------------------------------------------------------------------------
 // Normalisation

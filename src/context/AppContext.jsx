@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
 
+import { rescoreCurrentResume } from '../services/currentResume.js';
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
 import { applyTailoredEdit, recordManualEdit } from '../services/tailoredEdits.js';
 
@@ -26,10 +27,23 @@ export const initialState = {
   /** Parsed JD object from parseJobDescriptionWithAI. Any key may be absent. */
   parsedJD: null,
 
-  /** Output of analyzeCompetencyGaps. */
+  /**
+   * Output of analyzeCompetencyGaps / calculateATSScore for the CURRENT resume
+   * (currentResume.js): the tailored copy when one exists, otherwise `resume`.
+   * Recomputed by the reducer whenever the current resume changes -- see
+   * RESCORING_ACTIONS below. Never stale relative to what Export prints.
+   */
   gapAnalysis: null,
-  /** Output of calculateATSScore. */
   atsScore: null,
+
+  /**
+   * The same two, as the Input run first computed them against the original
+   * parse. A permanent baseline for "before tailoring": set once per run and
+   * never recomputed. Often the very same objects as the current pair (no
+   * tailoring yet), which is how persistence stores them only once.
+   */
+  originalGapAnalysis: null,
+  originalAtsScore: null,
 
   /**
    * Output of tailorResumeWithAI, after mergeNonDestructiveResume has run.
@@ -93,8 +107,14 @@ export const ACTIONS = {
   SET_RESUME: 'set_resume',
   SET_JOB_DESCRIPTION: 'set_job_description',
   SET_PARSED_JD: 'set_parsed_jd',
+  /**
+   * The Input pipeline's analysis and score. They set the current pair AND,
+   * when none exists for this run yet, the baseline. Nothing else dispatches
+   * these: every later rescore happens inside the reducer.
+   */
   SET_GAP_ANALYSIS: 'set_gap_analysis',
   SET_ATS_SCORE: 'set_ats_score',
+  /** Payload `{ resume, changesLog, corrections, parsedJD }` -- `parsedJD` is the one the pass was built against. */
   SET_TAILORED_RESUME: 'set_tailored_resume',
   CLEAR_TAILORING: 'clear_tailoring',
   /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
@@ -151,7 +171,30 @@ function withInferredSkills(target, incoming) {
   return { ...target, skills };
 }
 
+/**
+ * Every action that changes the current resume, and so rescores it. The
+ * reducer recomputes inside the same transition rather than in an effect: an
+ * effect would commit one render with the new resume and the old score, and
+ * write that mismatched pair to storage. gapAnalyzer and atsScorer are pure,
+ * synchronous and cheap, so doing it here costs nothing and cannot be skipped
+ * by a caller that forgets.
+ *
+ * Exported so the pipeline scenario test can assert the list is complete.
+ */
+export const RESCORING_ACTIONS = [
+  'SET_TAILORED_RESUME', // a pass lands: current becomes the tailored copy
+  'UPDATE_TAILORED_SECTION', // a hand edit to the tailored copy
+  'MERGE_INFERRED_SKILLS', // approved skills appended to either copy
+  'CLEAR_TAILORING', // pass discarded: current falls back to `resume`
+];
+
 export function appReducer(state, action) {
+  const next = reduce(state, action);
+  if (next === state) return state;
+  return RESCORING_ACTIONS.some((name) => ACTIONS[name] === action.type) ? rescoreCurrentResume(next) : next;
+}
+
+function reduce(state, action) {
   switch (action.type) {
     case ACTIONS.RESET:
       return initialState;
@@ -164,10 +207,13 @@ export function appReducer(state, action) {
       return { ...state, jobDescription: action.payload };
     case ACTIONS.SET_PARSED_JD:
       return { ...state, parsedJD: action.payload };
+    // The baseline is written only while empty. CLEAR_ANALYSIS empties it at
+    // the start of every Input run, so it holds exactly that run's first
+    // result and cannot be overwritten later by accident.
     case ACTIONS.SET_GAP_ANALYSIS:
-      return { ...state, gapAnalysis: action.payload };
+      return { ...state, gapAnalysis: action.payload, originalGapAnalysis: state.originalGapAnalysis ?? action.payload };
     case ACTIONS.SET_ATS_SCORE:
-      return { ...state, atsScore: action.payload };
+      return { ...state, atsScore: action.payload, originalAtsScore: state.originalAtsScore ?? action.payload };
 
     // One dispatch for the whole tailoring result. The resume, the log of what
     // changed, and what the merge had to correct are produced together and are
@@ -180,6 +226,15 @@ export function appReducer(state, action) {
       // Tailor's busy flag is page-local, so the reset cannot see it to wait.
       if (!state.resume) return state;
       const payload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      // The same race with a new Input run instead of a reset: the run
+      // replaces resume and parsedJD while an older pass is still in flight,
+      // so `state.resume` is non-null again by the time the pass finishes.
+      // Without this it would land, be scored against a JD it was never
+      // tailored for, and show up on Export. Every run makes a new parsedJD
+      // object, so identity says whether this pass belongs to the current one.
+      // Identity, not the resume, because an approved skill replaces `resume`
+      // mid-pass without making the pass stale.
+      if (!state.parsedJD || payload.parsedJD !== state.parsedJD) return state;
       return {
         ...state,
         tailoredResume: payload.resume ?? null,
@@ -270,6 +325,8 @@ export function appReducer(state, action) {
         parsedJD: null,
         gapAnalysis: null,
         atsScore: null,
+        originalGapAnalysis: null,
+        originalAtsScore: null,
         // Tailoring is derived from the analysis; leaving it behind would show
         // a tailored resume built from artefacts that no longer exist.
         tailoredResume: null,
@@ -294,17 +351,26 @@ const AppContext = createContext(null);
  * store that fills in one render later would leave them empty.
  *
  * `ui` always starts from `initialState` -- see sessionPersistence.js.
+ *
+ * The current score is recomputed on the way in. With this build's scorer
+ * and an unchanged resume that is a no-op, and the stored objects are kept.
+ * It matters in two cases:
+ * - A session saved before scores tracked the current resume holds the
+ *   original score as its "current" one, even when a tailored resume exists.
+ *   loadSession adopts that as the baseline, and this rescores the tailored copy.
+ * - Build drift: a current score computed by an older scorer is replaced.
+ *   The baseline is not rescored. It records what the Input run found.
  */
-function hydrate(base) {
-  const { state: restored } = loadSession();
+export function hydrate(base, load = loadSession) {
+  const { state: restored } = load();
   if (!restored) return base;
-  return {
+  return rescoreCurrentResume({
     ...base,
     ...restored,
     sources: { ...base.sources, ...(restored.sources ?? {}) },
     settings: { ...base.settings, ...(restored.settings ?? {}) },
     ui: base.ui,
-  };
+  });
 }
 
 export function AppProvider({ children }) {
@@ -317,6 +383,8 @@ export function AppProvider({ children }) {
     parsedJD,
     gapAnalysis,
     atsScore,
+    originalGapAnalysis,
+    originalAtsScore,
     tailoredResume,
     changesLog,
     tailorCorrections,
@@ -326,9 +394,10 @@ export function AppProvider({ children }) {
   } = state;
 
   // Persist after every change to the pipeline slice -- each completed stage,
-  // a tailoring result, merged skills, a reset. `ui` is deliberately not a
-  // dependency, so stage ticks and spinners never trigger a write. Batched
-  // dispatches (the re-score's two) commit as one render and one write.
+  // a tailoring result, a hand edit, merged skills, a reset. `ui` is
+  // deliberately not a dependency, so stage ticks and spinners never trigger a
+  // write. A rescore happens inside the same reducer transition as the change
+  // that caused it, so the resume and its score are always written together.
   useEffect(() => {
     saveSession({
       resumeText,
@@ -337,6 +406,8 @@ export function AppProvider({ children }) {
       parsedJD,
       gapAnalysis,
       atsScore,
+      originalGapAnalysis,
+      originalAtsScore,
       tailoredResume,
       changesLog,
       tailorCorrections,
@@ -344,7 +415,7 @@ export function AppProvider({ children }) {
       sources,
       settings,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, sources, settings]);
 
   // Dev-only read handle for __manual__/session.manual.js, which has to compare
   // the live store against storage across a reload. Stripped from production

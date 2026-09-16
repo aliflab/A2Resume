@@ -76,6 +76,8 @@ const SAMPLE = {
   parsedJD: { jobTitle: 'Engineer', atsKeywords: { high: ['Go'], medium: [], low: [] } },
   gapAnalysis: { matchRate: 0.5 },
   atsScore: { total: 61 },
+  originalGapAnalysis: { matchRate: 0.25 },
+  originalAtsScore: { total: 40 },
   tailoredResume: { name: 'Jane Doe' },
   changesLog: [{ section: 'experience', before: 'a', after: 'b' }],
   tailorCorrections: [],
@@ -154,7 +156,7 @@ export function testOffline() {
     check('only the persisted fields are written', JSON.stringify(Object.keys(stored.state)) === JSON.stringify(PERSISTED_FIELD_NAMES));
     check('round trip is exact', JSON.stringify(loadSession().state) === JSON.stringify(SAMPLE));
 
-    saveSession({ ...SAMPLE, resumeText: '', jobDescription: '', resume: null, parsedJD: null, gapAnalysis: null, atsScore: null, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null });
+    saveSession({ ...SAMPLE, resumeText: '', jobDescription: '', resume: null, parsedJD: null, gapAnalysis: null, atsScore: null, originalGapAnalysis: null, originalAtsScore: null, tailoredResume: null, changesLog: null, tailorCorrections: null, tailorManualEdits: null });
     check('empty slice removes the entry rather than storing empties', localStorage.getItem(RAW_KEY) === null);
     check('provider choice alone is not a session', !hasSessionContent({ settings: { provider: 'gemini' }, sources: { provider: 'gemini' } }));
 
@@ -224,6 +226,57 @@ export function testOffline() {
     check(
       'dedup: flag set but gapAnalysis dropped -> score kept without it, no throw',
       !r.threw && r.value.state.atsScore?.total === 61 && !('gapAnalysis' in r.value.state.atsScore) && r.value.dropped.includes('gapAnalysis'),
+      r
+    );
+
+    // The baseline score (originalGapAnalysis / originalAtsScore).
+    const baseGap = { matched: [], partial: [], missing: [{ keyword: 'Go', priority: 'high' }], matchRate: 0 };
+    const baseScore = { total: 40, gapAnalysis: baseGap };
+    const untailored = { ...SAMPLE, gapAnalysis: baseGap, atsScore: baseScore, originalGapAnalysis: baseGap, originalAtsScore: baseScore };
+    saveSession(untailored);
+    env = JSON.parse(localStorage.getItem(RAW_KEY));
+    check(
+      'baseline: same objects as current -> written once, flag set',
+      env.originalScoreSharesCurrent === true && !('originalGapAnalysis' in env.state) && !('originalAtsScore' in env.state) && env.atsScoreSharesGapAnalysis === true,
+      env
+    );
+    loaded = loadSession().state;
+    check(
+      'baseline: shared pair restored as the very same objects',
+      loaded.originalAtsScore === loaded.atsScore && loaded.originalGapAnalysis === loaded.gapAnalysis && loaded.atsScore.gapAnalysis === loaded.gapAnalysis
+    );
+    check('baseline: shared restore equals what was saved', JSON.stringify(loaded) === JSON.stringify(untailored));
+    check('baseline: measureSession counts a shared baseline as absent', measureSession(untailored).perField.originalAtsScore === 4);
+
+    const tailoredPair = { ...untailored, gapAnalysis: gap, atsScore: { total: 61, gapAnalysis: gap } };
+    saveSession(tailoredPair);
+    env = JSON.parse(localStorage.getItem(RAW_KEY));
+    check(
+      'baseline: diverged from current -> written, its embedded gap stripped',
+      env.originalScoreSharesCurrent === false && env.originalAtsScoreSharesGapAnalysis === true && env.state.originalAtsScore.total === 40 && !('gapAnalysis' in env.state.originalAtsScore),
+      env
+    );
+    loaded = loadSession().state;
+    check(
+      'baseline: diverged pair restored intact, each score sharing its own gap',
+      loaded.originalAtsScore.total === 40 && loaded.atsScore.total === 61 && loaded.originalAtsScore.gapAnalysis === loaded.originalGapAnalysis && loaded.atsScore.gapAnalysis === loaded.gapAnalysis
+    );
+    check('baseline: diverged restore equals what was saved', JSON.stringify(loaded) === JSON.stringify(tailoredPair));
+
+    // Written before baselines existed: no flag, no original fields. Its score
+    // never tracked tailoring, so it is the baseline.
+    const legacyState = { ...SAMPLE, gapAnalysis: gap, atsScore: { total: 61 } };
+    delete legacyState.originalGapAnalysis;
+    delete legacyState.originalAtsScore;
+    localStorage.setItem(RAW_KEY, JSON.stringify({ version: SESSION_VERSION, atsScoreSharesGapAnalysis: false, state: legacyState }));
+    loaded = loadSession().state;
+    check('baseline: pre-baseline session adopts its stored score as the baseline', loaded.originalAtsScore === loaded.atsScore && loaded.originalGapAnalysis === loaded.gapAnalysis && loaded.originalAtsScore.total === 61);
+
+    localStorage.setItem(RAW_KEY, JSON.stringify({ version: SESSION_VERSION, originalScoreSharesCurrent: false, state: { ...SAMPLE, originalAtsScore: 'corrupt' } }));
+    r = noThrow(loadSession);
+    check(
+      'baseline: a corrupt stored baseline is dropped, never replaced by the current score',
+      !r.threw && !('originalAtsScore' in r.value.state) && r.value.dropped.includes('originalAtsScore') && r.value.state.atsScore.total === 61,
       r
     );
 

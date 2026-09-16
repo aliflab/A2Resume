@@ -234,7 +234,7 @@ export async function testReducer() {
 
     check('CLEAR_TAILORING clears the edit log', appReducer(s, { type: ACTIONS.CLEAR_TAILORING }).tailorManualEdits === null);
     check('CLEAR_ANALYSIS clears the edit log', appReducer(s, { type: ACTIONS.CLEAR_ANALYSIS }).tailorManualEdits === null);
-    check('a new pass (SET_TAILORED_RESUME) clears the edit log', appReducer(s, { type: ACTIONS.SET_TAILORED_RESUME, payload: { resume: base, changesLog: [] } }).tailorManualEdits === null);
+    check('a new pass (SET_TAILORED_RESUME) clears the edit log', appReducer(s, { type: ACTIONS.SET_TAILORED_RESUME, payload: { resume: base, changesLog: [], parsedJD: s.parsedJD } }).tailorManualEdits === null);
     const merged = appReducer(s, { type: ACTIONS.MERGE_INFERRED_SKILLS, payload: ['Terraform'] });
     check('approving an inferred skill keeps hand edits and is not logged as one', merged.tailoredResume.summary === 'Staff backend engineer.' && merged.tailorManualEdits.length === 1);
   } finally {
