@@ -28,7 +28,7 @@ export default function PdfPreview({ resume, fileName }) {
       </p>
 
       <PDFViewer className="export__preview" showToolbar>
-        {document}
+        {doc}
       </PDFViewer>
     </>
   );
