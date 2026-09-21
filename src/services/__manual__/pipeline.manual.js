@@ -35,7 +35,7 @@ import { analyzeCompetencyGaps, collectResumeSkills, collectResumeText, countOcc
 import { calculateATSScore } from '../atsScorer.js';
 import { compareScores, describeScoreChange, recoverBaseline, rescoreCurrentResume, selectCurrentResume } from '../currentResume.js';
 import { mergeNonDestructiveResume } from '../resumeTailor.js';
-import { toDraft } from '../tailoredEdits.js';
+import { newEntryDraft, toDraft } from '../tailoredEdits.js';
 import { SESSION_STORAGE_NAME, SESSION_VERSION, loadSession, measureSession, saveSession } from '../sessionPersistence.js';
 
 const RAW_KEY = `a2resume:${SESSION_STORAGE_NAME}`;
@@ -374,6 +374,10 @@ export async function testScenario() {
       SET_TAILORED_RESUME: { ...pass, parsedJD: edited2.parsedJD },
       CLEAR_TAILORING: undefined,
       UPDATE_TAILORED_SECTION: { section: 'summary', value: 'Staff engineer. Kubernetes.' },
+      // Adding and removing a whole entry changes which keywords the resume
+      // contains, so both must rescore exactly like a hand edit.
+      ADD_TAILORED_ENTRY: { section: 'experience', value: { ...newEntryDraft('experience'), title: 'Platform Engineer', company: 'Nimbus Data', startDate: 'Feb 2024', bullets: ['Ran the Terraform migration for 12 AWS accounts.'] } },
+      REMOVE_TAILORED_ENTRY: { section: 'experience', index: 0 },
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
       SET_STATUS: 'idle',

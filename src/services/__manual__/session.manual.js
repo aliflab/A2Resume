@@ -82,6 +82,12 @@ const SAMPLE = {
   changesLog: [{ section: 'experience', before: 'a', after: 'b' }],
   tailorCorrections: [],
   tailorManualEdits: [{ section: 'summary', index: null, label: 'Summary' }],
+  // Every persisted field has to be present, in PERSISTED_FIELD_NAMES order:
+  // "only the persisted fields are written" compares the stored keys against
+  // that list, and an undefined field is dropped by JSON.stringify rather than
+  // stored as null. draftEdits was added to PERSISTED_FIELDS without being
+  // added here, so that assertion had been failing since.
+  draftEdits: null,
   sources: { resume: 'paste', jobDescription: 'paste', resumeFileName: null, jobDescriptionUrl: null, provider: 'gemini' },
   settings: { provider: 'gemini' },
 };

@@ -2,7 +2,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer 
 
 import { recoverBaseline, rescoreCurrentResume } from '../services/currentResume.js';
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
-import { applyTailoredEdit, dropPendingDraft, isDraftAddress, putPendingDraft, recordManualEdit } from '../services/tailoredEdits.js';
+import {
+  NEW_ENTRY_INDEX,
+  applyTailoredEdit,
+  applyTailoredEntryAdd,
+  applyTailoredEntryRemoval,
+  dropPendingDraft,
+  isDraftAddress,
+  putPendingDraft,
+  recordManualEdit,
+  reindexRowsAfterRemoval,
+} from '../services/tailoredEdits.js';
 
 /**
  * The single global store for the app. useReducer + Context only --
@@ -130,6 +140,10 @@ export const ACTIONS = {
   CLEAR_TAILORING: 'clear_tailoring',
   /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
   UPDATE_TAILORED_SECTION: 'update_tailored_section',
+  /** Append one hand-written entry to a list section. Payload `{ section, value }`. */
+  ADD_TAILORED_ENTRY: 'add_tailored_entry',
+  /** Delete one entry from a list section. Payload `{ section, index }`. */
+  REMOVE_TAILORED_ENTRY: 'remove_tailored_entry',
   /** Autosave one open editor block's unsaved content. Payload `{ section, index, value }`. */
   SET_DRAFT_EDIT: 'set_draft_edit',
   /** Throw one pending draft away. Payload `{ section, index }`. */
@@ -199,6 +213,8 @@ function withInferredSkills(target, incoming) {
 export const RESCORING_ACTIONS = [
   'SET_TAILORED_RESUME', // a pass lands: current becomes the tailored copy
   'UPDATE_TAILORED_SECTION', // a hand edit to the tailored copy
+  'ADD_TAILORED_ENTRY', // a whole entry written by hand: new keywords, new bullets
+  'REMOVE_TAILORED_ENTRY', // a whole entry deleted: its keywords leave the resume
   'MERGE_INFERRED_SKILLS', // approved skills appended to either copy
   'CLEAR_TAILORING', // pass discarded: current falls back to `resume`
 ];
@@ -293,6 +309,62 @@ function reduce(state, action) {
         tailoredResume: result.resume,
         tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
         draftEdits,
+      };
+    }
+
+    // One new entry, appended to a list section. Same shape of guard as the
+    // edit above: an invalid or entirely blank payload returns null from
+    // applyTailoredEntryAdd and leaves state alone.
+    //
+    // AN ADD MOVES NO EXISTING INDEX, because it appends. So no pending draft
+    // and no edit-log row is touched apart from the add form's own draft,
+    // which is spent by the add exactly as a block's draft is spent by Save.
+    case ACTIONS.ADD_TAILORED_ENTRY: {
+      const { section } = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      const remaining = dropPendingDraft(state.draftEdits, section, NEW_ENTRY_INDEX);
+      const dropped = remaining !== state.draftEdits;
+      const draftEdits = dropped ? (remaining.length > 0 ? remaining : null) : state.draftEdits;
+
+      const result = applyTailoredEntryAdd(state.tailoredResume, action.payload);
+      if (!result) return dropped ? { ...state, draftEdits } : state;
+      return {
+        ...state,
+        tailoredResume: result.resume,
+        tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
+        draftEdits,
+      };
+    }
+
+    // One entry deleted from a list section. The page confirms by name first;
+    // by the time this runs the decision is made.
+    //
+    // A REMOVAL DOES MOVE EVERY LATER INDEX, and two things in this store are
+    // addressed by one: `draftEdits` and `tailorManualEdits`. Both are moved
+    // with the list, which is what stops a pending draft from reattaching to
+    // the neighbour that shifted into its old slot -- see the comment on
+    // reindexRowsAfterRemoval for the exact failure. Doing it here, in the
+    // same transition as the removal, is the same reasoning as rescoring
+    // here: a caller cannot forget it, and no render sees the two disagree.
+    //
+    // Nothing in this store can put the entry back. `state.resume` is
+    // untouched, so a discarded pass restores it -- but that is a full fresh
+    // pass, which is meant to start over. mergeNonDestructiveResume, the one
+    // thing built to restore dropped entries, is reachable only from
+    // tailorResumeWithAI with the ORIGINAL parse as its first argument and a
+    // brand-new model response as its second; `state.tailoredResume` is never
+    // an input to it, so a hand removal is never "corrected" back in.
+    case ACTIONS.REMOVE_TAILORED_ENTRY: {
+      const result = applyTailoredEntryRemoval(state.tailoredResume, action.payload);
+      if (!result) return state;
+      const { section } = result.edit;
+      const drafts = reindexRowsAfterRemoval(state.draftEdits, section, result.index);
+      const logged = reindexRowsAfterRemoval(state.tailorManualEdits, section, result.index);
+      return {
+        ...state,
+        tailoredResume: result.resume,
+        tailorManualEdits: recordManualEdit(logged, result.edit),
+        // Emptied means gone, not an empty array -- the same rule as a save.
+        draftEdits: Array.isArray(drafts) && drafts.length === 0 ? null : drafts,
       };
     }
 

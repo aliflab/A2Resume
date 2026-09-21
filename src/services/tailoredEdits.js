@@ -23,6 +23,20 @@
  * draft-then-commit round trip, not against the raw value. Otherwise opening a
  * restored entry that lacks `location` and pressing Save would write
  * `location: ''`, change nothing visible, and still be logged as a manual edit.
+ *
+ * WHOLE ENTRIES CAN BE ADDED AND REMOVED
+ * Tailoring for a specific job often means dropping an old role outright, not
+ * rewording every bullet in it. `applyTailoredEntryAdd` and
+ * `applyTailoredEntryRemoval` change the length of a list section, which makes
+ * index-based addressing move underneath everything that holds one --
+ * `draftEdits` and `tailorManualEdits` both do. `reindexRowsAfterRemoval` is
+ * what keeps those rows pointing at the entry they were written for; see its
+ * comment for the bug it exists to prevent.
+ *
+ * An add APPENDS, and that is load-bearing rather than lazy: appending is the
+ * only insertion point that moves no existing index, so an add can never drift
+ * a draft or a log row. There is no reordering in this editor, so a new entry
+ * prints last in its section.
  */
 
 import { asArray, asObject, asString } from './gapAnalyzer.js';
@@ -31,6 +45,19 @@ export const EDITABLE_SECTIONS = ['header', 'summary', 'skills', 'experience', '
 
 /** Sections edited one entry at a time, addressed by index. */
 export const LIST_SECTIONS = ['experience', 'projects', 'education', 'certifications'];
+
+/**
+ * The draft address of a list section's "add a new entry" form.
+ *
+ * A new entry has no index yet -- it is not in the list -- but its form is a
+ * real editable block that can hold the most typing anyone does here, so it
+ * must be autosaved and recoverable like every other block. A sentinel index
+ * gives it an address without pretending it is at a position, and because it is
+ * not an integer, `reindexRowsAfterRemoval` leaves it alone.
+ */
+export const NEW_ENTRY_INDEX = 'new';
+
+export const isNewEntryIndex = (index) => index === NEW_ENTRY_INDEX;
 
 export const SECTION_LABELS = {
   header: 'Header and contact',
@@ -300,6 +327,172 @@ export function applyTailoredEdit(tailored, payload) {
 }
 
 // ---------------------------------------------------------------------------
+// Whole entries: add and remove
+// ---------------------------------------------------------------------------
+
+/**
+ * A blank draft for a new entry in a list section, in exactly the shape the
+ * section's existing edit form already renders. `toDraft` of an empty object
+ * is that shape by construction, so the add form and the edit form cannot
+ * drift apart -- adding a field to one adds it to the other.
+ *
+ * @returns {object | null} null for a section that has no entries.
+ */
+export function newEntryDraft(section) {
+  return LIST_SECTIONS.includes(section) ? toDraft(section, {}) : null;
+}
+
+/**
+ * True when a new-entry draft still holds nothing worth adding. The editor
+ * disables the add button on it, rather than letting the click do nothing
+ * visible, and `applyTailoredEntryAdd` refuses the same shape.
+ */
+export function isBlankEntryDraft(section, draft) {
+  const commit = COMMIT_ENTRY[section];
+  if (!commit || !isPlainObject(draft)) return true;
+  return same(commit(draft, {}), commit(newEntryDraft(section), {}));
+}
+
+/**
+ * Append one new entry to a list section.
+ *
+ * APPEND, NOT INSERT. See the note at the top of this file: appending is the
+ * one position that leaves every existing index alone, so no pending draft and
+ * no edit-log row has to be moved. The cost is that a new entry prints last in
+ * its section, since this editor has no reordering.
+ *
+ * An entry with nothing typed in it is rejected the same way a no-op save is:
+ * it would add a block that Export drops (`normalizeResumeForExport` filters
+ * entries with nothing printable), so it would be a row in the editor that is
+ * nowhere in the output.
+ *
+ * @param {unknown} tailored
+ * @param {{ section: string, value: unknown }} payload
+ * @returns {{ resume: object, index: number, edit: object } | null}
+ */
+export function applyTailoredEntryAdd(tailored, payload) {
+  if (!isPlainObject(tailored)) return null;
+  const { section, value } = asObject(payload);
+  if (!LIST_SECTIONS.includes(section) || !isPlainObject(value)) return null;
+
+  const commit = COMMIT_ENTRY[section];
+  const entry = commit(value, {});
+  if (same(entry, commit(newEntryDraft(section), {}))) return null;
+
+  const list = asArray(tailored[section]);
+  const index = list.length;
+  return {
+    resume: { ...tailored, [section]: [...list, entry] },
+    index,
+    edit: { section, index, label: `${SECTION_LABELS[section]}: ${describeEntry(section, entry)} (added by hand)` },
+  };
+}
+
+/**
+ * Remove one entry from a list section.
+ *
+ * This is the only operation here that destroys content the user did not type
+ * in this session, so the page confirms it by name first (see
+ * TailoredResumeEditor). What it destroys is only the tailored copy:
+ * `state.resume` is untouched, so discarding the whole pass brings the entry
+ * back. Nothing else does -- see the comment on `reindexRowsAfterRemoval`
+ * and the merge note in resumeTailor.js.
+ *
+ * The returned edit is `append: true`: a removal is not an edit *to* a
+ * surviving entry, so it must never replace a row keyed on the index it used
+ * to occupy, and two removals must never collapse into one row.
+ *
+ * @param {unknown} tailored
+ * @param {{ section: string, index: number }} payload
+ * @returns {{ resume: object, index: number, edit: object } | null}
+ */
+export function applyTailoredEntryRemoval(tailored, payload) {
+  if (!isPlainObject(tailored)) return null;
+  const { section, index } = asObject(payload);
+  if (!LIST_SECTIONS.includes(section)) return null;
+
+  const list = asArray(tailored[section]);
+  if (!Number.isInteger(index) || index < 0 || index >= list.length) return null;
+
+  const described = describeEntry(section, list[index]);
+  return {
+    resume: { ...tailored, [section]: list.filter((_, i) => i !== index) },
+    index,
+    edit: {
+      section,
+      index: null,
+      append: true,
+      label: `${SECTION_LABELS[section]}: ${described} (removed by hand)`,
+    },
+  };
+}
+
+/**
+ * Rows addressed by array index, moved to follow a removal from `section`.
+ *
+ * THE BUG THIS EXISTS TO PREVENT
+ * `draftEdits` and `tailorManualEdits` both store `{ section, index }` against
+ * a plain array index. Remove experience 1 of four and the entry that was at 2
+ * is now at 1, 3 is now at 2 -- but a pending draft still says 2. On the next
+ * load `recoverableDrafts` resolves 2 to what used to be entry 3, finds it
+ * different from the draft, and offers it back labelled as that entry with the
+ * *other* entry's text in the form. Pressing Save then writes one role's
+ * content over another's. It is silent, it looks like a recovered draft
+ * working correctly, and it is the same class of bug as any index drift on a
+ * mutated array.
+ *
+ * So: a row at the removed index is dropped (its entry is gone), a row above
+ * it moves down one, and everything else -- other sections, single-section
+ * rows with a null index, the NEW_ENTRY_INDEX sentinel, junk from storage --
+ * is left exactly as it is.
+ *
+ * Returns the argument itself, null included, when nothing moved, matching
+ * `dropPendingDraft` so callers can use identity to mean "no change".
+ */
+export function reindexRowsAfterRemoval(rows, section, removedIndex) {
+  const list = asArray(rows);
+  if (!Number.isInteger(removedIndex)) return rows;
+
+  let changed = false;
+  const out = [];
+  for (const row of list) {
+    if (!isPlainObject(row) || row.section !== section || !Number.isInteger(row.index)) {
+      out.push(row);
+    } else if (row.index === removedIndex) {
+      changed = true;
+    } else if (row.index > removedIndex) {
+      changed = true;
+      out.push({ ...row, index: row.index - 1 });
+    } else {
+      out.push(row);
+    }
+  }
+  return changed ? out : rows;
+}
+
+/**
+ * Stable React keys for one list section's blocks.
+ *
+ * Index keys were safe while entries could not be added, removed or reordered,
+ * and the old comment in the editor said exactly that. They are not safe now:
+ * removing entry 0 of three re-renders the entry that was at 1 under key 0, so
+ * React keeps the *previous* block's component state -- an open editor holding
+ * the removed entry's draft would carry on under the surviving entry's
+ * heading. Keying on what the entry says instead means a block keeps its state
+ * only while it is the same entry. Duplicate descriptions get an occurrence
+ * suffix so two identically-named entries are still two blocks.
+ */
+export function entryBlockKeys(section, entries) {
+  const seen = new Map();
+  return asArray(entries).map((entry) => {
+    const base = describeEntry(section, entry);
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base}#${n}`;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The edit log
 // ---------------------------------------------------------------------------
 
@@ -307,11 +500,20 @@ export function applyTailoredEdit(tailored, payload) {
  * One row per edited part: editing the same entry twice updates its row and
  * moves it last rather than adding a second one. The log exists so that a
  * discard or a re-run can say exactly what it is about to throw away.
+ *
+ * `append: true` opts out of that replacement. A removal is the only thing
+ * that uses it: it is not an edit to a surviving entry, so it has no index to
+ * be keyed on, and two removals in the same section must be two rows. Without
+ * this they would both land at `{ section, index: null }` and the second would
+ * silently replace the first -- a destructive-action log that under-reports.
  */
 export function recordManualEdit(edits, edit) {
   if (!isPlainObject(edit)) return asArray(edits);
-  const kept = asArray(edits).filter((e) => isPlainObject(e) && !(e.section === edit.section && e.index === edit.index));
-  return [...kept, { section: edit.section, index: edit.index ?? null, label: asString(edit.label) }];
+  const row = { section: edit.section, index: edit.index ?? null, label: asString(edit.label) };
+  const rows = asArray(edits).filter(isPlainObject);
+  if (edit.append === true) return [...rows, row];
+  const kept = rows.filter((e) => !(e.section === row.section && e.index === row.index));
+  return [...kept, row];
 }
 
 /** Labels of the edited parts, tolerating a stored log of any shape. */
@@ -345,7 +547,10 @@ export function describeManualEdits(edits) {
  */
 export const DRAFT_AUTOSAVE_MS = 1500;
 
-/** Stable identity for one editable block. List sections are addressed by index. */
+/**
+ * Stable identity for one editable block. List sections are addressed by
+ * index, plus the NEW_ENTRY_INDEX sentinel for the add form.
+ */
 export function draftKey(section, index) {
   return LIST_SECTIONS.includes(section) ? `${section}:${index}` : section;
 }
@@ -353,7 +558,8 @@ export function draftKey(section, index) {
 /** Whether `section`/`index` names a block that can hold a draft at all. */
 export function isDraftAddress(section, index) {
   if (!EDITABLE_SECTIONS.includes(section)) return false;
-  return LIST_SECTIONS.includes(section) ? Number.isInteger(index) && index >= 0 : index === null || index === undefined;
+  if (!LIST_SECTIONS.includes(section)) return index === null || index === undefined;
+  return isNewEntryIndex(index) || (Number.isInteger(index) && index >= 0);
 }
 
 /**
@@ -367,6 +573,9 @@ export function committedDraft(section, index, tailored) {
   if (section === 'header') return toDraft('header', tailored);
   if (section === 'summary') return toDraft('summary', tailored.summary);
   if (section === 'skills') return toDraft('skills', tailored.skills);
+  // The add form's "saved value" is the blank it opens with. So a draft that
+  // is still blank is not offered back, and one with anything typed in it is.
+  if (isNewEntryIndex(index)) return newEntryDraft(section);
   const list = asArray(tailored[section]);
   if (index >= list.length) return undefined;
   return toDraft(section, list[index]);
@@ -408,20 +617,31 @@ export function dropPendingDraft(drafts, section, index = null) {
  * value is dropped rather than surfaced -- nothing was lost, so re-opening the
  * block and calling it unsaved would be a lie.
  *
- * @returns {{ section: string, index: number | null, key: string, label: string, value: unknown }[]}
+ * `only`, when given, restricts the result to drafts whose `value` is one of
+ * those objects. The editor freezes that set at mount to mean "the drafts that
+ * were already in the session when this page loaded", which is what
+ * "recovered" actually means. It is a set of VALUES rather than of addresses
+ * on purpose: a removal reindexes pending drafts, so an address frozen at
+ * mount would afterwards name the wrong entry, while the value object is
+ * carried across the reindex unchanged.
+ *
+ * @returns {{ section: string, index: number | 'new' | null, key: string, label: string, value: unknown }[]}
  */
-export function recoverableDrafts(drafts, tailored) {
+export function recoverableDrafts(drafts, tailored, only) {
   const out = [];
   for (const draft of asArray(drafts)) {
     if (!isPlainObject(draft)) continue;
     const { section, value } = draft;
+    if (only && !only.has(value)) continue;
     const index = draft.index ?? null;
     const committed = committedDraft(section, index, tailored);
     if (committed === undefined || same(committed, value)) continue;
     const label =
       index === null
         ? SECTION_LABELS[section]
-        : `${SECTION_LABELS[section]}: ${describeEntry(section, asArray(asObject(tailored)[section])[index])}`;
+        : isNewEntryIndex(index)
+          ? `${SECTION_LABELS[section]}: a new entry`
+          : `${SECTION_LABELS[section]}: ${describeEntry(section, asArray(asObject(tailored)[section])[index])}`;
     out.push({ section, index, key: draftKey(section, index), label, value });
   }
   return out;

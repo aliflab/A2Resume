@@ -949,6 +949,37 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Edit and Remove sit together. Remove is .button--danger so a destructive
+   action never looks like the neutral one next to it. */
+.edit-block__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.4rem;
+}
+
+/* The add-an-entry block closes each section, separated by a little more than
+   the entries are from each other so it does not read as another entry. */
+.edit-block--add {
+  margin-top: 0.4rem;
+  border-top-style: dashed;
+}
+
+.edit-block--add.edit-block:last-child {
+  padding-bottom: 0.9rem;
+}
+
+.edit-block__confirm {
+  margin: 0.75rem 0 0;
+}
+
+.edit-block__confirm p {
+  margin: 0 0 0.5rem;
+}
+
+.edit-block__confirm p:last-child {
+  margin-bottom: 0;
+}
+
 .edit-block__view p,
 .edit-block__view ul {
   margin: 0.3rem 0 0;

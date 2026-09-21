@@ -12,9 +12,13 @@ import {
 } from '../../services/resumeExport.js';
 import {
   DRAFT_AUTOSAVE_MS,
+  NEW_ENTRY_INDEX,
   SECTION_LABELS,
   describeEntry,
   draftKey,
+  entryBlockKeys,
+  isBlankEntryDraft,
+  newEntryDraft,
   recoverableDrafts,
   toDraft,
   toggleCurrentlyWorking,
@@ -40,29 +44,52 @@ import {
  * as recovered and unsaved, with a control to throw it away instead. Saving,
  * cancelling, a new tailoring pass and a new Input run all end a draft.
  *
- * Entries can be edited but not added or removed here: the tailoring merge is
- * built never to lose an entry, and a delete button on a real role is a much
- * bigger decision than an editor. Blank an entry's fields and Export leaves it
- * out.
+ * Whole entries can be added and removed as well as edited. Both change the
+ * length of a list section, and that has two consequences this file has to
+ * carry:
+ *
+ * - Blocks are keyed on what the entry says (`entryBlockKeys`), not on its
+ *   index. With index keys, removing entry 0 would re-render entry 1 under
+ *   key 0 and React would hand it the removed block's component state --
+ *   including an open editor holding the removed entry's draft.
+ * - The set of recovered drafts is frozen at mount by VALUE, not by address,
+ *   because the reducer reindexes pending drafts on a removal. A frozen
+ *   address would afterwards name a different entry.
+ *
+ * Removing is confirmed inline, by name, in the block itself -- the same
+ * pattern as "Start over" and the tailoring discard, and never window.confirm.
+ * It only takes the entry out of the tailored copy; `state.resume` is
+ * untouched, so discarding the pass brings it back.
+ *
+ * Adding appends, because appending is the only insertion point that moves no
+ * existing index. The add form is an ordinary block with the section's own
+ * edit form in it, so it autosaves and recovers like every other one.
  */
 export default function TailoredResumeEditor({ resume }) {
   const { state, dispatch } = useApp();
   const save = (section, index) => (value) =>
     dispatch({ type: ACTIONS.UPDATE_TAILORED_SECTION, payload: { section, index, value } });
+  const add = (section) => (value) => dispatch({ type: ACTIONS.ADD_TAILORED_ENTRY, payload: { section, value } });
+  const removeEntry = (section, index) => () =>
+    dispatch({ type: ACTIONS.REMOVE_TAILORED_ENTRY, payload: { section, index } });
 
   // Frozen at mount on purpose. These are the drafts that were already in the
   // session when this page loaded, which is exactly what "recovered from
   // before the reload" means. Recomputing it would make every block the user
   // opens and types in claim to be recovered a second and a half later.
-  const [recovered] = useState(() => new Map(recoverableDrafts(state.draftEdits, resume).map((d) => [d.key, d])));
-  const draftOf = (section, index = null) => recovered.get(draftKey(section, index))?.value;
+  //
+  // Frozen as the draft VALUES, not their addresses: removing an entry
+  // reindexes every pending draft above it, so an address frozen at mount
+  // would point at the wrong entry afterwards. The value objects are carried
+  // through the reindex unchanged, so identity survives it.
+  const [seeds] = useState(() => new Set(recoverableDrafts(state.draftEdits, resume).map((d) => d.value)));
 
-  // Which of those are still unresolved, so the banner disappears as they are
-  // saved or discarded rather than lingering as a claim about the past.
-  const pending = new Set(
-    (Array.isArray(state.draftEdits) ? state.draftEdits : []).map((d) => draftKey(d?.section, d?.index ?? null))
-  );
-  const outstanding = [...recovered.values()].filter((d) => pending.has(d.key));
+  // Re-derived each render from the live drafts, restricted to those seeds, so
+  // the banner shrinks as they are saved or discarded rather than lingering as
+  // a claim about the past -- and so a reindexed draft is still found.
+  const outstanding = recoverableDrafts(state.draftEdits, resume, seeds);
+  const recovered = new Map(outstanding.map((d) => [d.key, d]));
+  const draftOf = (section, index = null) => recovered.get(draftKey(section, index))?.value;
 
   const normalised = normalizeResumeForExport(resume);
   const list = (section) => (Array.isArray(resume?.[section]) ? resume[section] : []);
@@ -137,24 +164,51 @@ export default function TailoredResumeEditor({ resume }) {
         </EditableBlock>
       </section>
 
-      <EntrySection section="experience" entries={list('experience')} save={save} draftOf={draftOf} Form={ExperienceForm} View={ExperienceView} />
-      <EntrySection section="projects" entries={list('projects')} save={save} draftOf={draftOf} Form={ProjectForm} View={ProjectView} />
-      <EntrySection section="education" entries={list('education')} save={save} draftOf={draftOf} Form={EducationForm} View={EducationView} />
-      <EntrySection
-        section="certifications"
-        entries={list('certifications')}
-        save={save}
-        draftOf={draftOf}
-        Form={CertificationForm}
-        View={CertificationView}
-      />
+      {[
+        ['experience', ExperienceForm, ExperienceView],
+        ['projects', ProjectForm, ProjectView],
+        ['education', EducationForm, EducationView],
+        ['certifications', CertificationForm, CertificationView],
+      ].map(([section, Form, View]) => (
+        <EntrySection
+          key={section}
+          section={section}
+          entries={list(section)}
+          save={save}
+          add={add}
+          removeEntry={removeEntry}
+          draftOf={draftOf}
+          Form={Form}
+          View={View}
+        />
+      ))}
     </>
   );
 }
 
-/** One card per list section, one block per entry, addressed by index. */
-function EntrySection({ section, entries, save, draftOf, Form, View }) {
-  const noun = section === 'certifications' ? 'certification' : section === 'education' ? 'education' : section.replace(/s$/, '');
+/**
+ * What one entry of each section is called. Spelled out rather than derived
+ * from the section name: stripping the plural gives "a experience", and
+ * "education" has no singular that reads as one item at all.
+ *
+ * `noun` is what the aria-labels and per-entry controls use ("Remove
+ * experience 2"); `one` is the article-and-noun phrase for prose.
+ */
+const ENTRY_NOUNS = {
+  experience: { noun: 'experience', one: 'an experience entry' },
+  projects: { noun: 'project', one: 'a project' },
+  education: { noun: 'education', one: 'an education entry' },
+  certifications: { noun: 'certification', one: 'a certification' },
+};
+
+/**
+ * One card per list section: one block per entry, plus one block for adding a
+ * new one. Entries are addressed by index for dispatch, but keyed for React on
+ * what they say -- see entryBlockKeys.
+ */
+function EntrySection({ section, entries, save, add, removeEntry, draftOf, Form, View }) {
+  const { noun, one } = ENTRY_NOUNS[section];
+  const keys = entryBlockKeys(section, entries);
   return (
     <section className="card editor-card">
       <h2>{SECTION_LABELS[section]}</h2>
@@ -163,9 +217,7 @@ function EntrySection({ section, entries, save, draftOf, Form, View }) {
       ) : (
         entries.map((entry, index) => (
           <EditableBlock
-            // Index keys are safe: entries are never added, removed or
-            // reordered from this editor.
-            key={index}
+            key={keys[index]}
             section={section}
             index={index}
             recovered={draftOf(section, index)}
@@ -174,21 +226,63 @@ function EntrySection({ section, entries, save, draftOf, Form, View }) {
             makeDraft={() => toDraft(section, entry)}
             Form={Form}
             onSave={save(section, index)}
+            onRemove={removeEntry(section, index)}
+            removeLabel={`Remove ${noun} ${index + 1}`}
           >
             <View entry={normalizeResumeForExport({ [section]: [entry] })[section][0]} />
           </EditableBlock>
         ))
       )}
+
+      <EditableBlock
+        variant="add"
+        section={section}
+        index={NEW_ENTRY_INDEX}
+        recovered={draftOf(section, NEW_ENTRY_INDEX)}
+        title={`Add ${one}`}
+        editLabel={`Add ${noun}`}
+        openLabel="Add"
+        saveLabel={`Add ${one}`}
+        makeDraft={() => newEntryDraft(section)}
+        canSave={(draft) => !isBlankEntryDraft(section, draft)}
+        Form={Form}
+        onSave={add(section)}
+      >
+        <p className="muted">
+          Written by hand, not by the AI pass. It is added at the end of this section — there is no reordering here
+          yet.
+        </p>
+      </EditableBlock>
     </section>
   );
 }
 
-function EditableBlock({ section, index = null, title, editLabel, makeDraft, Form, onSave, recovered, children }) {
+function EditableBlock({
+  section,
+  index = null,
+  title,
+  editLabel,
+  openLabel = 'Edit',
+  saveLabel = 'Save',
+  variant,
+  makeDraft,
+  canSave,
+  Form,
+  onSave,
+  onRemove,
+  removeLabel,
+  recovered,
+  children,
+}) {
   const { dispatch } = useApp();
   // A recovered draft opens the block straight away: the content is the point,
   // and hiding it behind an Edit click would look like it had been lost.
   const [draft, setDraft] = useState(() => (recovered === undefined ? null : recovered));
   const [fromRecovery, setFromRecovery] = useState(recovered !== undefined);
+  // Removing is a real destruction of content the user may not have typed
+  // here, so it asks first, inline and by name. Local state: one block's
+  // question is nobody else's business, and it must not survive a remount.
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const editing = draft !== null;
 
   // Autosave. The cleanup cancels the pending write whenever the draft changes
@@ -216,15 +310,57 @@ function EditableBlock({ section, index = null, title, editLabel, makeDraft, For
   };
 
   return (
-    <div className={`edit-block${editing ? ' edit-block--editing' : ''}`}>
+    <div className={`edit-block${editing ? ' edit-block--editing' : ''}${variant === 'add' ? ' edit-block--add' : ''}`}>
       <div className="edit-block__head">
         <h3>{title}</h3>
-        {!editing && (
-          <button type="button" onClick={() => setDraft(makeDraft())} aria-label={editLabel}>
-            Edit
-          </button>
-        )}
+        <div className="edit-block__actions">
+          {!editing && (
+            <button type="button" onClick={() => setDraft(makeDraft())} aria-label={editLabel}>
+              {openLabel}
+            </button>
+          )}
+          {onRemove && !confirmingRemove && (
+            <button
+              type="button"
+              className="button--danger"
+              onClick={() => setConfirmingRemove(true)}
+              aria-label={removeLabel ?? `Remove ${title}`}
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </div>
+
+      {confirmingRemove && (
+        <div className="notice notice--warn edit-block__confirm" role="alert">
+          <p>
+            <strong>Remove {title}?</strong>
+          </p>
+          <p>
+            It is taken out of your tailored resume, so it will not be in the PDF or the plain text, and your ATS
+            score is recalculated without it
+            {editing ? ', and the unsaved changes open in this block go with it' : ''}. Your original resume from step
+            1 is not changed — discarding the whole tailoring pass brings this entry back.
+          </p>
+          <p className="actions">
+            <button
+              type="button"
+              className="button button--danger"
+              onClick={() => {
+                setConfirmingRemove(false);
+                close();
+                onRemove();
+              }}
+            >
+              Yes, remove it
+            </button>
+            <button type="button" className="button" onClick={() => setConfirmingRemove(false)}>
+              Keep it
+            </button>
+          </p>
+        </div>
+      )}
 
       {editing ? (
         <div className="editor">
@@ -243,12 +379,13 @@ function EditableBlock({ section, index = null, title, editLabel, makeDraft, For
             <button
               type="button"
               className="button button--primary"
+              disabled={canSave ? !canSave(draft) : false}
               onClick={() => {
                 onSave(draft);
                 close();
               }}
             >
-              Save
+              {saveLabel}
             </button>
             <button type="button" onClick={discard}>
               Cancel
