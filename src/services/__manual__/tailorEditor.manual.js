@@ -53,6 +53,9 @@
  *   await t.liveAddExperience();   // on /tailor: add an entry, check store + Export + score
  *   // reload (F5)
  *   (await import('...')).verifyAddedEntrySurvived();
+ *   await t.liveAddAroundDraft();  // insert at the top around a draft and a log row
+ *   // reload (F5)
+ *   (await import('...')).verifyInsertDraftSurvived();  // also cleans up after itself
  *   await t.liveRemoveEntry();     // "Keep it", then confirm; checks the score falls back
  *   // reload (F5)
  *   (await import('...')).verifyRemovalSurvived();
@@ -71,6 +74,8 @@
 
 import {
   DRAFT_AUTOSAVE_MS,
+  ENTRY_INSERT_AT,
+  LIST_SECTIONS,
   NEW_ENTRY_INDEX,
   applyTailoredEdit,
   applyTailoredEntryAdd,
@@ -81,12 +86,15 @@ import {
   draftKey,
   dropPendingDraft,
   entryBlockKeys,
+  entryInsertIndex,
+  insertsAtTop,
   isBlankEntryDraft,
   isDraftAddress,
   newEntryDraft,
   putPendingDraft,
   recordManualEdit,
   recoverableDrafts,
+  reindexRowsAfterInsertion,
   reindexRowsAfterRemoval,
   toDraft,
   toggleCurrentlyWorking,
@@ -337,9 +345,11 @@ export function testDraftsOffline() {
  * Adding and removing whole entries. Pure: no DOM, no key, no network, so this
  * also runs under Node.
  *
- * Three things here are the point, and each is written as the failure it
+ * Four things here are the point, and each is written as the failure it
  * prevents rather than as the behaviour it asserts:
  * - index drift on a removal reattaching a pending draft to the wrong entry,
+ * - the same drift on an INSERTION at the top, which is where experience and
+ *   education now add entries (ENTRY_INSERT_AT),
  * - mergeNonDestructiveResume resurrecting a deliberate removal,
  * - a section emptied to zero entries breaking Export instead of disappearing.
  */
@@ -377,15 +387,16 @@ export function testEntriesOffline() {
         links: [{ label: 'Case study', url: ' https://nimbus.example/case ' }, { label: 'dead', url: '  ' }],
       },
     });
-    check('add: appended at the end of the section', added && added.resume.experience.length === 3 && added.index === 2, added && added.resume.experience.length);
-    check('add: every existing entry is the SAME object (no index moved)', added && added.resume.experience[0] === base.experience[0] && added.resume.experience[1] === base.experience[1]);
+    check('add: experience inserts FIRST, where the most recent role belongs', added && added.resume.experience.length === 3 && added.index === 0, added && { length: added.resume.experience.length, index: added.index });
+    check('add: every existing entry is the SAME object, just one slot later', added && added.resume.experience[1] === base.experience[0] && added.resume.experience[2] === base.experience[1]);
     check('add: other sections untouched, input not mutated', added && added.resume.projects === base.projects && JSON.stringify(base) === frozen);
-    const fresh = added.resume.experience[2];
+    const fresh = added.resume.experience[0];
     check('add: committed like a save -- trimmed, blank bullet gone, url-less link gone', fresh.bullets.length === 2 && fresh.bullets[0] === 'Ran the Terraform migration for 12 accounts.' && fresh.links.length === 1 && fresh.links[0].url === 'https://nimbus.example/case', fresh);
     check('add: a current role stores the flag, not an end date', fresh.isCurrentlyWorking === true && fresh.endDate === '');
     const addedText = exportText(added.resume);
     check('add: Export prints the new entry, its bullets and its link', addedText.includes('Platform Engineer — Nimbus Data') && addedText.includes('- Cut deploy time from 40 to 6 minutes.') && addedText.includes('https://nimbus.example/case') && addedText.includes('Feb 2024 – Present'));
-    check('add: logged as a hand edit, naming the entry', added.edit.section === 'experience' && added.edit.index === 2 && added.edit.label === 'Experience: Platform Engineer — Nimbus Data (added by hand)', added.edit);
+    check('add: Export prints it ABOVE the roles it was inserted before', addedText.indexOf('Platform Engineer — Nimbus Data') < addedText.indexOf('Senior Engineer — Acme'), addedText.slice(addedText.indexOf('EXPERIENCE'), addedText.indexOf('EXPERIENCE') + 160));
+    check('add: logged as a hand edit at the index it actually occupies', added.edit.section === 'experience' && added.edit.index === 0 && added.edit.label === 'Experience: Platform Engineer — Nimbus Data (added by hand)', added.edit);
     for (const [label, payload] of [
       ['unknown section', { section: 'summary', value: blank }],
       ['value not an object', { section: 'experience', value: 'Platform Engineer' }],
@@ -404,6 +415,32 @@ export function testEntriesOffline() {
       const r = applyTailoredEntryAdd(base, { section: sec, value });
       return r && r.resume[sec].length === base[sec].length + 1;
     }));
+
+    // --- the insertion point, per section ----------------------------------
+    // Experience and education are read newest-first, so a hand-added entry
+    // goes at the top. Projects and certifications have no such convention and
+    // append, which is also the position that moves no index at all.
+    check('insertion point: experience and education at the top, projects and certifications at the end',
+      insertsAtTop('experience') && insertsAtTop('education') && !insertsAtTop('projects') && !insertsAtTop('certifications'));
+    check('insertion point: every list section declares one, and nothing else does',
+      LIST_SECTIONS.every((sec) => ['top', 'end'].includes(ENTRY_INSERT_AT[sec])) &&
+      Object.keys(ENTRY_INSERT_AT).every((sec) => LIST_SECTIONS.includes(sec)), ENTRY_INSERT_AT);
+    check('insertion point: entryInsertIndex agrees with it, and an append is the old length',
+      entryInsertIndex('experience', 3) === 0 && entryInsertIndex('education', 3) === 0 && entryInsertIndex('projects', 3) === 3 && entryInsertIndex('certifications', 0) === 0);
+    check('insertion point: an "end" section still appends, and moves no existing entry', (() => {
+      const r = applyTailoredEntryAdd(base, { section: 'projects', value: { ...newEntryDraft('projects'), name: 'Later project' } });
+      return r.index === 1 && r.resume.projects[0] === base.projects[0] && r.resume.projects[1].name === 'Later project';
+    })());
+    check('insertion point: education inserts first too', (() => {
+      const r = applyTailoredEntryAdd(base, { section: 'education', value: { ...newEntryDraft('education'), institution: 'Open University', degree: 'MSc' } });
+      return r.index === 0 && r.resume.education[0].institution === 'Open University' && r.resume.education[1] === base.education[0];
+    })());
+    check('insertion point: adding to an EMPTY section is index 0 either way', (() => {
+      const bare = { ...base, experience: [], projects: [] };
+      const top = applyTailoredEntryAdd(bare, { section: 'experience', value: { ...blank, title: 'Only role' } });
+      const end = applyTailoredEntryAdd(bare, { section: 'projects', value: { ...newEntryDraft('projects'), name: 'Only project' } });
+      return top.index === 0 && end.index === 0 && top.resume.experience.length === 1 && end.resume.projects.length === 1;
+    })());
 
     // --- remove ------------------------------------------------------------
     check('remove: an index out of range, a missing index and an unknown section are all refused',
@@ -479,6 +516,45 @@ export function testEntriesOffline() {
     check('drift (fixed): WITH reindexing, it is offered back under its own entry', migrated.length === 1 && migrated[0].label === 'Experience: Intern — Gamma' && migrated[0].value === draftValue, migrated[0] && migrated[0].label);
     const removedItsOwn = recoverableDrafts(reindexRowsAfterRemoval(drafts, 'experience', 2), applyTailoredEntryRemoval(four, { section: 'experience', index: 2 }).resume);
     check('drift: removing the entry a draft belongs to drops that draft, it is not reattached', removedItsOwn.length === 0, removedItsOwn);
+
+    // --- reindexing the other way: an insertion ----------------------------
+    const pushed = reindexRowsAfterInsertion(rows, 'experience', 0);
+    check('insert-reindex: every row in the section moves up one', pushed.find((r) => r.label === 'exp0').index === 1 && pushed.find((r) => r.label === 'exp3').index === 4);
+    check('insert-reindex: nothing is dropped -- an insertion destroys no entry', pushed.filter((r) => typeof r === 'object' && r.section === 'experience' && Number.isInteger(r.index)).length === 4);
+    check('insert-reindex: the row AT the insertion point is the displaced one, so it moves', reindexRowsAfterInsertion(rows, 'experience', 2).find((r) => r.label === 'exp2').index === 3);
+    check('insert-reindex: rows below the insertion point do not move', reindexRowsAfterInsertion(rows, 'experience', 2).find((r) => r.label === 'exp1').index === 1);
+    check('insert-reindex: another section, a null index, the new-entry sentinel and junk are untouched',
+      pushed.find((r) => r.label === 'proj1').index === 1 && pushed.find((r) => r.label === 'summary').index === null && pushed.find((r) => r.label === 'new').index === NEW_ENTRY_INDEX && pushed.includes('junk from storage'));
+    check('insert-reindex: an APPEND moves nothing, so it returns the argument itself',
+      reindexRowsAfterInsertion(rows, 'experience', 4) === rows && reindexRowsAfterInsertion(rows, 'projects', 2) === rows);
+    check('insert-reindex: no change returns the argument itself, null included',
+      reindexRowsAfterInsertion(rows, 'education', 0) === rows && reindexRowsAfterInsertion(null, 'experience', 0) === null && reindexRowsAfterInsertion(rows, 'experience', 'x') === rows);
+    check('insert-reindex: the draft value object is carried across unchanged, which is what the editor freezes on',
+      (() => {
+        const value = { title: 'typed' };
+        const out = reindexRowsAfterInsertion([{ section: 'experience', index: 1, value }], 'experience', 0);
+        return out[0].value === value && out[0].index === 2;
+      })());
+
+    // THE DRIFT BUG ON AN INSERTION, end to end, and its fix. A pending draft
+    // against experience 0, then a new entry inserted at 0. Without the shift
+    // the draft resolves to the brand-new entry -- a different role -- and is
+    // offered back under its name with this role's text in the form.
+    const headDraftValue = { ...toDraft('experience', four.experience[0]), bullets: ['Rewrote the migration tooling.'] };
+    const headDrafts = putPendingDraft(null, { section: 'experience', index: 0, value: headDraftValue });
+    const inserted = applyTailoredEntryAdd(four, { section: 'experience', value: { ...blank, title: 'Platform Engineer', company: 'Nimbus Data' } });
+    const notShifted = recoverableDrafts(headDrafts, inserted.resume);
+    check('insert drift (proof the bug is real): WITHOUT shifting, the draft is offered back under the NEW entry', notShifted.length === 1 && notShifted[0].label === 'Experience: Platform Engineer — Nimbus Data', notShifted[0] && notShifted[0].label);
+    const shifted = recoverableDrafts(reindexRowsAfterInsertion(headDrafts, 'experience', inserted.index), inserted.resume);
+    check('insert drift (fixed): WITH shifting, it is offered back under its own entry', shifted.length === 1 && shifted[0].label === 'Experience: Senior Engineer — Acme' && shifted[0].value === headDraftValue, shifted[0] && shifted[0].label);
+    check('insert drift: the edit log shifts the same way, so a logged edit keeps naming its own entry', (() => {
+      const log = recordManualEdit(null, { section: 'experience', index: 0, label: 'Experience: Senior Engineer — Acme' });
+      const moved2 = reindexRowsAfterInsertion(log, 'experience', inserted.index);
+      // The new entry's own row is recorded AFTER the shift, exactly as the
+      // reducer does it, so it cannot replace the row that used to hold index 0.
+      const full = recordManualEdit(moved2, inserted.edit);
+      return moved2[0].index === 1 && full.length === 2 && full.some((e) => e.index === 0 && /Nimbus Data/.test(e.label));
+    })());
 
     // --- the new-entry draft address ---------------------------------------
     check('new-entry address: valid for a list section, not for a single one', isDraftAddress('experience', NEW_ENTRY_INDEX) && !isDraftAddress('summary', NEW_ENTRY_INDEX));
@@ -649,6 +725,7 @@ export async function testEntriesReducer() {
       },
     });
     check('add: the entry is in the tailored resume', added.tailoredResume.experience.length === scored.tailoredResume.experience.length + 1);
+    check('add: experience inserted it FIRST, and pushed the previous first role down one', added.tailoredResume.experience[0].company === 'Nimbus Data' && added.tailoredResume.experience[1] === scored.tailoredResume.experience[0], added.tailoredResume.experience.map((e) => e.company));
     check('add: the ORIGINAL resume is untouched -- a hand add is not a re-parse', added.resume === scored.resume && added.resume.experience.length === base.experience.length);
     check('add: it is logged as a hand edit', describeManualEdits(added.tailorManualEdits).some((l) => l.includes('Nimbus Data')), describeManualEdits(added.tailorManualEdits));
     check('add: RESCORING -- the score is recomputed in the same transition', added.atsScore !== scored.atsScore && consistent(added));
@@ -659,12 +736,51 @@ export async function testEntriesReducer() {
     check('add: a blank payload changes nothing at all', appReducer(added, { type: ACTIONS.ADD_TAILORED_ENTRY, payload: { section: 'experience', value: newEntryDraft('experience') } }) === added);
     check('add: no tailoring pass means nothing to add to', appReducer({ ...added, tailoredResume: null }, { type: ACTIONS.ADD_TAILORED_ENTRY, payload: { section: 'experience', value: { ...newEntryDraft('experience'), title: 'X' } } }).tailoredResume === null);
 
+    // THE INSERTION SHIFT, through the reducer. Same class of check as the
+    // removal one below: an insert at the top moves every index in the section,
+    // so a pending draft and an edit-log row addressed by index must move with
+    // it or they end up naming the wrong entry.
+    check('add at the top: a pending draft and a log row both follow their own entry', (() => {
+      const owner = describeEntry('experience', scored.tailoredResume.experience[0]);
+      const seeded = {
+        ...scored,
+        draftEdits: [
+          { section: 'experience', index: 0, value: { ...toDraft('experience', scored.tailoredResume.experience[0]), title: 'DRAFT ON THE OLD FIRST ENTRY' } },
+          { section: 'summary', index: null, value: 'a draft on another block' },
+        ],
+        tailorManualEdits: [{ section: 'experience', index: 0, label: `Experience: ${owner}` }],
+      };
+      const out = appReducer(seeded, { type: ACTIONS.ADD_TAILORED_ENTRY, payload: { section: 'experience', value: { ...newEntryDraft('experience'), title: 'Platform Engineer', company: 'Nimbus Data' } } });
+      const draft = out.draftEdits.find((d) => d.value && d.value.title === 'DRAFT ON THE OLD FIRST ENTRY');
+      const rec = recoverableDrafts(out.draftEdits, out.tailoredResume).find((d) => d.value === draft.value);
+      const oldRow = out.tailorManualEdits.find((e) => e.label === `Experience: ${owner}`);
+      const addRow = out.tailorManualEdits.find((e) => /Nimbus Data/.test(e.label));
+      return (
+        draft.index === 1 &&
+        rec.label === `Experience: ${owner}` &&               // its own entry, not the new one
+        out.draftEdits.some((d) => d.section === 'summary' && d.index === null) &&
+        oldRow.index === 1 &&                                 // the log row moved too
+        addRow.index === 0 &&                                 // and the add's own row took slot 0
+        out.tailorManualEdits.length === 2                    // without replacing the displaced row
+      );
+    })());
+    check('add at the END does not shift anything: the rows are the very same array', (() => {
+      const log = [{ section: 'projects', index: 0, label: 'Projects: Tracer' }];
+      const drafts = [{ section: 'projects', index: 0, value: { ...toDraft('projects', scored.tailoredResume.projects[0]), name: 'TYPED' } }];
+      const out = appReducer({ ...scored, draftEdits: drafts, tailorManualEdits: log }, { type: ACTIONS.ADD_TAILORED_ENTRY, payload: { section: 'projects', value: { ...newEntryDraft('projects'), name: 'Later project' } } });
+      return out.draftEdits === drafts && out.tailorManualEdits.length === 2 && out.tailorManualEdits[0] === log[0] && out.tailoredResume.projects.at(-1).name === 'Later project';
+    })());
+
     // --- point 4: remove ---------------------------------------------------
     const k8sBefore = (added.gapAnalysis.matched ?? []).some((key) => key.keyword === 'Kubernetes');
-    const withoutFirst = { ...added.tailoredResume, experience: added.tailoredResume.experience.slice(1) };
-    check('setup: "Kubernetes" is matched, and experience 0 is the only place in the whole resume that says it',
-      k8sBefore && !JSON.stringify(withoutFirst).toLowerCase().includes('kubernetes'), { k8sBefore });
-    const removed = appReducer(added, { type: ACTIONS.REMOVE_TAILORED_ENTRY, payload: { section: 'experience', index: 0 } });
+    // Addressed by search, not by a literal 0: the add above inserted at the
+    // top, so the Acme role is no longer the first entry. A hard-coded index
+    // here would quietly remove the entry that was just added instead.
+    const acmeAt = added.tailoredResume.experience.findIndex((e) => e.company === 'Acme');
+    const withoutAcme = { ...added.tailoredResume, experience: added.tailoredResume.experience.filter((_, i) => i !== acmeAt) };
+    check('setup: "Kubernetes" is matched, and the Acme entry is the only place in the whole resume that says it',
+      k8sBefore && acmeAt > 0 && !JSON.stringify(withoutAcme).toLowerCase().includes('kubernetes'), { k8sBefore, acmeAt });
+    const removed = appReducer(added, { type: ACTIONS.REMOVE_TAILORED_ENTRY, payload: { section: 'experience', index: acmeAt } });
     check('remove: the entry is gone from the tailored resume', !removed.tailoredResume.experience.some((e) => e.company === 'Acme'), removed.tailoredResume.experience.map((e) => e.company));
     check('remove: the ORIGINAL resume still has it, which is what a discard restores', removed.resume === added.resume && removed.resume.experience.some((e) => e.company === 'Acme'));
     check('remove: RESCORING -- the score is recomputed in the same transition', removed.atsScore !== added.atsScore && consistent(removed));
@@ -766,13 +882,20 @@ export async function testEntriesReducer() {
     // hydrate rescores and recovers a baseline from `state.resume` -- which
     // still holds the removed entry.
     if (typeof localStorage !== 'undefined') {
-      saveSession(afterRemoval);
+      // The state to round-trip has to hold BOTH a hand add and a hand
+      // removal of an ORIGINAL entry, since `state.resume` is what hydrate
+      // recovers a baseline from and Acme is the entry still in there. The
+      // add above inserted at the TOP, so `afterRemoval` (index 0, the
+      // drafts case) dropped the new entry rather than Acme -- this removes
+      // Acme instead, keeping the drafts so their reindexing round-trips too.
+      const roundTrip = appReducer(drafted, { type: ACTIONS.REMOVE_TAILORED_ENTRY, payload: { section: 'experience', index: acmeAt } });
+      saveSession(roundTrip);
       const rehydrated = hydrate(initialState);
       check('reload: the removed entry is still gone after a real save/load/hydrate round trip', !rehydrated.tailoredResume.experience.some((e) => e.company === 'Acme'), rehydrated.tailoredResume.experience.map((e) => e.company));
-      check('reload: the added entry survived too', rehydrated.tailoredResume.experience.some((e) => e.company === 'Nimbus Data'));
+      check('reload: the added entry survived too, still first', rehydrated.tailoredResume.experience[0].company === 'Nimbus Data', rehydrated.tailoredResume.experience.map((e) => e.company));
       check('reload: the reindexed draft came back at its migrated index', (rehydrated.draftEdits || []).some((d) => d.value && d.value.title === 'DRAFT ON A LATER ENTRY' && d.index === 1), rehydrated.draftEdits);
       check('reload: the score still matches the shortened resume', consistent(rehydrated));
-      check('reload: hydrate\'s baseline recovery reads state.resume and does NOT write it into the tailored copy', rehydrated.resume.experience.some((e) => e.company === 'Acme') && rehydrated.tailoredResume.experience.length === afterRemoval.tailoredResume.experience.length);
+      check('reload: hydrate\'s baseline recovery reads state.resume and does NOT write it into the tailored copy', rehydrated.resume.experience.some((e) => e.company === 'Acme') && rehydrated.tailoredResume.experience.length === roundTrip.tailoredResume.experience.length);
       check('reload: the removal log row survived', describeManualEdits(rehydrated.tailorManualEdits).some((l) => l.includes('(removed by hand)')));
     } else {
       console.warn('  (skipped the reload round trip: no localStorage)');
@@ -1074,8 +1197,9 @@ export async function liveAddExperience() {
     await waitFor(() => experienceOf(liveState().tailoredResume).some((e) => e.company === company), 'the entry to land');
 
     const after = liveState();
-    const entry = experienceOf(after.tailoredResume).at(-1);
-    check('store: appended at the END of the section', entry.company === company && entry.title === 'Platform Engineer');
+    const entry = experienceOf(after.tailoredResume)[0];
+    check('store: inserted FIRST in the section, where the most recent role belongs', entry.company === company && entry.title === 'Platform Engineer', experienceOf(after.tailoredResume).map((e) => e.company));
+    check('store: the roles that were already there kept their order, one slot later', experienceOf(after.tailoredResume).slice(1).every((e, i) => e === experienceOf(before.tailoredResume)[i]));
     check('store: the current role saved the flag, not an end date', entry.isCurrentlyWorking === true && entry.endDate === '');
     check('store: the bullet is there, trimmed', entry.bullets[0] === bullet);
     check('store: the ORIGINAL resume is untouched', !experienceOf(after.resume).some((e) => e.company === company));
@@ -1085,6 +1209,16 @@ export async function liveAddExperience() {
     check('Export: the plain text prints the entry, its dates and its bullet', (() => {
       const text = exportText(selectExportSource(after).raw);
       return text.includes(`Platform Engineer — ${company}`) && text.includes('Feb 2024 – Present') && text.includes(`- ${bullet}`);
+    })());
+    check('Export: it prints FIRST in the experience section, above the role that used to lead it', (() => {
+      const text = exportText(selectExportSource(after).raw);
+      const previous = experienceOf(before.tailoredResume)[0];
+      if (!previous?.company) return true; // nothing was above it to be above
+      return text.indexOf(company) < text.indexOf(previous.company);
+    })());
+    check('page: the new block is the FIRST experience block on screen', (() => {
+      const first = document.querySelector('button[aria-label="Edit experience 1"]');
+      return Boolean(first) && first.closest('.edit-block').innerText.includes(company);
     })());
     check('SCORE: recomputed, and it moved', after.atsScore !== before.atsScore && after.atsScore.total !== before.atsScore.total, { before: before.atsScore?.total, after: after.atsScore?.total });
     check('SCORE: the baseline from step 1 did not move', after.originalAtsScore === before.originalAtsScore);
@@ -1106,16 +1240,145 @@ export function verifyAddedEntrySurvived() {
     const state = liveState();
     const entry = experienceOf(state.tailoredResume).find((e) => e.company === company);
     check('store after reload: the entry is there', Boolean(entry), experienceOf(state.tailoredResume).map((e) => e.company));
+    check('store after reload: still FIRST in the section', experienceOf(state.tailoredResume)[0]?.company === company, experienceOf(state.tailoredResume).map((e) => e.company));
     check('store after reload: with its bullet', entry?.bullets?.[0] === bullet);
     check('store after reload: the section is one longer than before', experienceOf(state.tailoredResume).length === countBefore + 1);
     check('store after reload: the hand-edit log survived', describeManualEdits(state.tailorManualEdits).some((l) => l.includes(company)));
     check('Export after reload: still printed', exportText(selectExportSource(state).raw).includes(`- ${bullet}`));
+    check('Export after reload: still printed in the top position', (() => {
+      const text = exportText(selectExportSource(state).raw);
+      const second = experienceOf(state.tailoredResume)[1];
+      if (!second?.company) return true;
+      return text.indexOf(company) < text.indexOf(second.company);
+    })());
     if (location.pathname === '/tailor') check('page after reload: the block is on screen', document.body.innerText.includes(company));
     rememberEntry({ scoreAfterAdd: state.atsScore?.total ?? null });
   } catch (err) {
     check(err.message, false, err);
   }
-  return finishDraft('Next: await liveRemoveEntry() -- it removes the entry you just added.');
+  return finishDraft('Next: await liveAddAroundDraft() -- the insertion half of the index-drift check.');
+}
+
+/**
+ * The INSERTION half of the index-drift check, live, and the mirror of
+ * liveRemoveEntryWithDraft.
+ *
+ * Experience inserts at the top, so a new entry moves every existing index in
+ * the section up one. Two things in the store are addressed by one: a pending
+ * draft and an edit-log row. Both must follow their own entry. If they do not,
+ * the draft is offered back under the brand-new entry's name with the old
+ * entry's text in the form, and Save writes one role's content over another's.
+ *
+ * This edits and drafts against the FIRST experience entry of whatever session
+ * is loaded, and leaves an extra entry and a pending draft behind for
+ * verifyInsertDraftSurvived() to check and then clean up. Run it on test data.
+ */
+export async function liveAddAroundDraft() {
+  failed = 0;
+  console.group('tailorEditor - live entries 2b: inserting at the top around a draft and a log row');
+  try {
+    const before = liveState();
+    const list = experienceOf(before.tailoredResume);
+    if (list.length < 1) throw new Error('Needs at least one experience entry in the loaded session.');
+    const owner = describeEntry('experience', list[0]);
+    const stamp = Date.now().toString(36);
+    const savedMarker = `Saved bullet on the old first entry [${stamp}]`;
+    const draftMarker = `DRAFT-ON-THE-OLD-FIRST-ENTRY-${stamp}`;
+    const company = `Insert Probe ${stamp}`;
+
+    // A SAVED edit on experience 1, so there is a log row at index 0 to move.
+    let block = await openFirstExperience();
+    let field = block.querySelector('textarea[aria-label="bullet 1"]');
+    if (!field) {
+      buttonByText(block, 'Add bullet').click();
+      field = await waitFor(() => block.querySelector('textarea[aria-label="bullet 1"]'), 'a bullet field');
+    }
+    setValue(field, savedMarker);
+    await saveBlock(block);
+    check('setup: the edit is logged against experience index 0', (liveState().tailorManualEdits ?? []).some((e) => e.section === 'experience' && e.index === 0), liveState().tailorManualEdits);
+
+    // An UNSAVED draft on the same entry, autosaved to the session.
+    block = await openFirstExperience();
+    setValue(block.querySelector('textarea[aria-label="bullet 1"]'), draftMarker);
+    await waitForAutosave();
+    let pending = pendingDrafts().find((d) => JSON.stringify(d.value).includes(draftMarker));
+    check('setup: the draft autosaved against experience index 0', Boolean(pending) && pending.index === 0, pending?.index);
+
+    // Now insert a new entry at the top. Everything in the section moves up one.
+    const addBlock = await openAddBlock('experience', 'experience');
+    setValue(addBlock.querySelector('input[name="title"]'), 'Platform Engineer');
+    setValue(addBlock.querySelector('input[name="company"]'), company);
+    setValue(addBlock.querySelector('input[name="startDate"]'), 'Mar 2026');
+    buttonByText(addBlock, 'Add an experience entry').click();
+    await waitFor(() => experienceOf(liveState().tailoredResume)[0]?.company === company, 'the new entry to land first');
+
+    const after = liveState();
+    check('the new entry is at index 0 and the old first entry is at 1', describeEntry('experience', experienceOf(after.tailoredResume)[1]) === owner, experienceOf(after.tailoredResume).map((e) => e.company));
+    pending = pendingDrafts().find((d) => JSON.stringify(d.value).includes(draftMarker));
+    check('the pending draft followed its entry UP one index', Boolean(pending) && pending.index === 1, pending?.index);
+    check('the draft is still the SAME value object -- nothing was rewritten', JSON.stringify(pending.value).includes(draftMarker));
+    const row = recoverableDrafts(pendingDrafts(), after.tailoredResume).find((d) => JSON.stringify(d.value).includes(draftMarker));
+    check('and it resolves to ITS OWN entry, not the new one that took its slot', Boolean(row) && row.label === `Experience: ${owner}`, { got: row?.label, expected: `Experience: ${owner}` });
+    check('the edit-log row for the old first entry moved up one too', (after.tailorManualEdits ?? []).some((e) => e.section === 'experience' && e.index === 1), after.tailorManualEdits);
+    check('the add got its own log row at index 0, without replacing the displaced one', (after.tailorManualEdits ?? []).some((e) => e.section === 'experience' && e.index === 0 && e.label.includes(company)), after.tailorManualEdits);
+    check('the saved bullet is still on the entry that owns it, not on the new one', experienceOf(after.tailoredResume)[1].bullets[0] === savedMarker && !(experienceOf(after.tailoredResume)[0].bullets ?? []).includes(savedMarker));
+    check('the unsaved draft did not leak into the resume', !JSON.stringify(after.tailoredResume).includes(draftMarker));
+    check('storage agrees with the store', JSON.stringify(storedState()?.draftEdits) === JSON.stringify(pendingDrafts()));
+    check('SCORE: recomputed in the same transition', consistentLive(after));
+    check('page: the block still open with the draft in it is under ITS OWN heading', (() => {
+      const open = [...document.querySelectorAll('.edit-block')].find((b) => b.querySelector('textarea')?.value === draftMarker);
+      return Boolean(open) && open.innerText.includes(owner.split(' — ')[0]) && !open.innerText.includes(company);
+    })());
+    rememberEntry({ insertCompany: company, insertDraftMarker: draftMarker, insertSavedMarker: savedMarker, insertOwner: owner });
+  } catch (err) {
+    check(err.message, false, err);
+  }
+  return finishDraft('Now RELOAD (F5), stay on /tailor, then run verifyInsertDraftSurvived().');
+}
+
+/**
+ * Step 2c, after a real reload: the shifted draft and log row are still right,
+ * then put the session back -- discard the draft and remove the probe entry.
+ */
+export async function verifyInsertDraftSurvived() {
+  failed = 0;
+  console.group('tailorEditor - live entries 2c: the shifted draft after a reload');
+  try {
+    const { insertCompany, insertDraftMarker, insertSavedMarker, insertOwner } = entryMemo();
+    if (!insertCompany) throw new Error('Run liveAddAroundDraft() first.');
+    const state = liveState();
+    const list = experienceOf(state.tailoredResume);
+    check('store after reload: the new entry is still first', list[0]?.company === insertCompany, list.map((e) => e.company));
+    check('store after reload: the saved bullet is still on its own entry at index 1', list[1]?.bullets?.[0] === insertSavedMarker);
+    const pending = (state.draftEdits ?? []).find((d) => JSON.stringify(d.value).includes(insertDraftMarker));
+    check('store after reload: the draft is still addressed to index 1', Boolean(pending) && pending.index === 1, pending?.index);
+    const row = recoverableDrafts(state.draftEdits, state.tailoredResume).find((d) => JSON.stringify(d.value).includes(insertDraftMarker));
+    check('after reload: it is offered back under ITS OWN entry', Boolean(row) && row.label === `Experience: ${insertOwner}`, { got: row?.label, expected: `Experience: ${insertOwner}` });
+    check('after reload: the recovery banner names that entry, not the new one', (() => {
+      const banner = document.querySelector('.editor-recovered');
+      return Boolean(banner) && banner.innerText.includes(insertOwner) && !banner.innerText.includes(insertCompany);
+    })(), document.querySelector('.editor-recovered')?.innerText);
+    check('after reload: the draft still has not leaked into the resume', !JSON.stringify(state.tailoredResume).includes(insertDraftMarker));
+
+    // Put the session back: throw the draft away, then remove the probe entry.
+    const draftBlock = [...document.querySelectorAll('.edit-block')].find((b) => b.querySelector('textarea')?.value === insertDraftMarker);
+    if (draftBlock) {
+      buttonByText(draftBlock, 'Discard draft and use the last saved version').click();
+      await waitFor(() => !draftBlock.querySelector('.editor'), 'the recovered block to close');
+    }
+    const at = experienceOf(liveState().tailoredResume).findIndex((e) => e.company === insertCompany);
+    if (at !== -1) {
+      await removeEntryBlock('experience', at + 1, 'confirm');
+      await waitFor(() => !experienceOf(liveState().tailoredResume).some((e) => e.company === insertCompany), 'the probe entry to go');
+    }
+    const restored = liveState();
+    check('cleanup: the draft is gone from the store and from storage', !JSON.stringify(restored.draftEdits ?? null).includes(insertDraftMarker) && !JSON.stringify(storedState()?.draftEdits ?? null).includes(insertDraftMarker));
+    check('cleanup: the probe entry is gone and the owning entry is back at index 0', experienceOf(restored.tailoredResume)[0]?.bullets?.[0] === insertSavedMarker, experienceOf(restored.tailoredResume).map((e) => e.company));
+    check('cleanup: the log row followed it back down to index 0', (restored.tailorManualEdits ?? []).some((e) => e.section === 'experience' && e.index === 0), restored.tailorManualEdits);
+  } catch (err) {
+    check(err.message, false, err);
+  }
+  return finishDraft('Next: await liveRemoveEntry() -- it removes the entry from step 1.');
 }
 
 /** Step 3: remove that entry through the confirmation. Both answers. */
@@ -1557,6 +1820,8 @@ export default {
   liveDraftClearedByNewPass,
   liveAddExperience,
   verifyAddedEntrySurvived,
+  liveAddAroundDraft,
+  verifyInsertDraftSurvived,
   liveRemoveEntry,
   verifyRemovalSurvived,
   liveRemoveEntryWithDraft,

@@ -29,14 +29,17 @@
  * rewording every bullet in it. `applyTailoredEntryAdd` and
  * `applyTailoredEntryRemoval` change the length of a list section, which makes
  * index-based addressing move underneath everything that holds one --
- * `draftEdits` and `tailorManualEdits` both do. `reindexRowsAfterRemoval` is
- * what keeps those rows pointing at the entry they were written for; see its
- * comment for the bug it exists to prevent.
+ * `draftEdits` and `tailorManualEdits` both do. `reindexRowsAfterRemoval` and
+ * `reindexRowsAfterInsertion` are what keep those rows pointing at the entry
+ * they were written for; see their comments for the bug they exist to prevent.
  *
- * An add APPENDS, and that is load-bearing rather than lazy: appending is the
- * only insertion point that moves no existing index, so an add can never drift
- * a draft or a log row. There is no reordering in this editor, so a new entry
- * prints last in its section.
+ * WHERE AN ADD LANDS IS PER SECTION -- see `ENTRY_INSERT_AT`. Experience and
+ * education are read newest-first, so a hand-added entry belongs at the top;
+ * projects and certifications have no such convention, so they append.
+ * Appending is the only position that moves no existing index, so it needs no
+ * reindexing at all. Inserting at the top moves every index in the section up
+ * one, which is exactly the drift a removal causes in the other direction, so
+ * it goes through the same row-shifting machinery.
  */
 
 import { asArray, asObject, asString } from './gapAnalyzer.js';
@@ -47,13 +50,44 @@ export const EDITABLE_SECTIONS = ['header', 'summary', 'skills', 'experience', '
 export const LIST_SECTIONS = ['experience', 'projects', 'education', 'certifications'];
 
 /**
+ * Where `applyTailoredEntryAdd` puts a new entry, per section.
+ *
+ * `'top'` (index 0) for experience and education: both are read newest-first
+ * by every human and every ATS, so a role added by hand is almost always the
+ * most recent one, and appending it would print it below a job the candidate
+ * left years earlier. `'end'` for projects and certifications, which carry no
+ * chronological convention -- there is nothing to be wrong about there, and
+ * appending is free.
+ *
+ * The cost of `'top'` is stated rather than hidden: it moves every existing
+ * index in the section up one, so the add must shift `draftEdits` and
+ * `tailorManualEdits` with it (`reindexRowsAfterInsertion`). There is still no
+ * reordering in this editor, so `'end'` sections still print a hand-added
+ * entry last.
+ */
+export const ENTRY_INSERT_AT = {
+  experience: 'top',
+  projects: 'end',
+  education: 'top',
+  certifications: 'end',
+};
+
+/** The index a new entry in `section` takes in a list of `length` entries. */
+export function entryInsertIndex(section, length) {
+  return ENTRY_INSERT_AT[section] === 'top' ? 0 : length;
+}
+
+/** True when an add to `section` inserts at the top, and so moves existing indices. */
+export const insertsAtTop = (section) => ENTRY_INSERT_AT[section] === 'top';
+
+/**
  * The draft address of a list section's "add a new entry" form.
  *
  * A new entry has no index yet -- it is not in the list -- but its form is a
  * real editable block that can hold the most typing anyone does here, so it
  * must be autosaved and recoverable like every other block. A sentinel index
  * gives it an address without pretending it is at a position, and because it is
- * not an integer, `reindexRowsAfterRemoval` leaves it alone.
+ * not an integer, the row reindexers leave it alone.
  */
 export const NEW_ENTRY_INDEX = 'new';
 
@@ -354,12 +388,16 @@ export function isBlankEntryDraft(section, draft) {
 }
 
 /**
- * Append one new entry to a list section.
+ * Add one new entry to a list section, at that section's insertion point.
  *
- * APPEND, NOT INSERT. See the note at the top of this file: appending is the
- * one position that leaves every existing index alone, so no pending draft and
- * no edit-log row has to be moved. The cost is that a new entry prints last in
- * its section, since this editor has no reordering.
+ * WHERE IT LANDS IS `ENTRY_INSERT_AT`, not a fixed rule. Experience and
+ * education insert at index 0 because they are read newest-first; projects and
+ * certifications append. An append moves nothing, so it needs no follow-up. An
+ * insert at the top moves every existing index in the section up one, and the
+ * caller MUST shift the index-addressed rows with it -- `index` is returned for
+ * exactly that, and the reducer feeds it to `reindexRowsAfterInsertion`. Get
+ * that wrong and you have the drift bug described on
+ * `reindexRowsAfterRemoval`, pointing the other way.
  *
  * An entry with nothing typed in it is rejected the same way a no-op save is:
  * it would add a block that Export drops (`normalizeResumeForExport` filters
@@ -380,9 +418,11 @@ export function applyTailoredEntryAdd(tailored, payload) {
   if (same(entry, commit(newEntryDraft(section), {}))) return null;
 
   const list = asArray(tailored[section]);
-  const index = list.length;
+  const index = entryInsertIndex(section, list.length);
+  const next = [...list];
+  next.splice(index, 0, entry);
   return {
-    resume: { ...tailored, [section]: [...list, entry] },
+    resume: { ...tailored, [section]: next },
     index,
     edit: { section, index, label: `${SECTION_LABELS[section]}: ${describeEntry(section, entry)} (added by hand)` },
   };
@@ -428,6 +468,41 @@ export function applyTailoredEntryRemoval(tailored, payload) {
 }
 
 /**
+ * Every index-addressed row in `section` put through `move`, which returns the
+ * row's new index or null to drop it.
+ *
+ * Rows that are not addressed by an integer index in this section are passed
+ * through untouched: other sections, the single-section rows with a null index,
+ * the NEW_ENTRY_INDEX sentinel (deliberately not an integer, so it lands here),
+ * and junk from storage. That list is the whole reason this walks rows rather
+ * than mapping over a section's own array.
+ *
+ * Returns the argument itself, null included, when no row moved, matching
+ * `dropPendingDraft` so callers can use identity to mean "no change" -- a
+ * reducer returning a fresh array for a no-op would make a no-op look like a
+ * real change and write storage for nothing.
+ */
+function moveIndexedRows(rows, section, move) {
+  const list = asArray(rows);
+  let changed = false;
+  const out = [];
+  for (const row of list) {
+    if (!isPlainObject(row) || row.section !== section || !Number.isInteger(row.index)) {
+      out.push(row);
+      continue;
+    }
+    const next = move(row.index);
+    if (next === null) changed = true;
+    else if (next === row.index) out.push(row);
+    else {
+      changed = true;
+      out.push({ ...row, index: next });
+    }
+  }
+  return changed ? out : rows;
+}
+
+/**
  * Rows addressed by array index, moved to follow a removal from `section`.
  *
  * THE BUG THIS EXISTS TO PREVENT
@@ -442,32 +517,40 @@ export function applyTailoredEntryRemoval(tailored, payload) {
  * mutated array.
  *
  * So: a row at the removed index is dropped (its entry is gone), a row above
- * it moves down one, and everything else -- other sections, single-section
- * rows with a null index, the NEW_ENTRY_INDEX sentinel, junk from storage --
- * is left exactly as it is.
- *
- * Returns the argument itself, null included, when nothing moved, matching
- * `dropPendingDraft` so callers can use identity to mean "no change".
+ * it moves down one, and everything else is left exactly as it is -- see
+ * `moveIndexedRows` for what "everything else" covers.
  */
 export function reindexRowsAfterRemoval(rows, section, removedIndex) {
-  const list = asArray(rows);
   if (!Number.isInteger(removedIndex)) return rows;
+  return moveIndexedRows(rows, section, (index) => {
+    if (index === removedIndex) return null;
+    return index > removedIndex ? index - 1 : index;
+  });
+}
 
-  let changed = false;
-  const out = [];
-  for (const row of list) {
-    if (!isPlainObject(row) || row.section !== section || !Number.isInteger(row.index)) {
-      out.push(row);
-    } else if (row.index === removedIndex) {
-      changed = true;
-    } else if (row.index > removedIndex) {
-      changed = true;
-      out.push({ ...row, index: row.index - 1 });
-    } else {
-      out.push(row);
-    }
-  }
-  return changed ? out : rows;
+/**
+ * Rows addressed by array index, moved to follow an insertion into `section`.
+ *
+ * THE SAME BUG AS `reindexRowsAfterRemoval`, POINTING THE OTHER WAY. Insert a
+ * new role at index 0 of three and the entry that was at 0 is now at 1, 1 is
+ * now at 2 -- but a pending draft still says 0, and so does its edit-log row.
+ * Without this, `recoverableDrafts` resolves 0 to the brand-new entry, finds it
+ * different from the draft, and offers the draft back labelled as the new entry
+ * with the old entry's text in the form; Save then writes one role's content
+ * over another's. The edit log drifts the same way, naming the wrong entry as
+ * hand-edited. Nothing throws and nothing looks wrong.
+ *
+ * So: a row at or above the inserted index moves up one, and nothing is
+ * dropped -- an insertion destroys no entry, so every row still has one.
+ *
+ * `>=`, not `>`, is the whole point: the row at the insertion point is exactly
+ * the one that got displaced. Appending (an index equal to the old length)
+ * therefore moves nothing, which is why `ENTRY_INSERT_AT`'s `'end'` sections
+ * need no special-casing here.
+ */
+export function reindexRowsAfterInsertion(rows, section, insertedIndex) {
+  if (!Number.isInteger(insertedIndex)) return rows;
+  return moveIndexedRows(rows, section, (index) => (index >= insertedIndex ? index + 1 : index));
 }
 
 /**

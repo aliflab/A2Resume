@@ -17,6 +17,7 @@ import {
   describeEntry,
   draftKey,
   entryBlockKeys,
+  insertsAtTop,
   isBlankEntryDraft,
   newEntryDraft,
   recoverableDrafts,
@@ -61,9 +62,13 @@ import {
  * It only takes the entry out of the tailored copy; `state.resume` is
  * untouched, so discarding the pass brings it back.
  *
- * Adding appends, because appending is the only insertion point that moves no
- * existing index. The add form is an ordinary block with the section's own
- * edit form in it, so it autosaves and recovers like every other one.
+ * Where an add lands is per section (`ENTRY_INSERT_AT`): experience and
+ * education insert at the top, because both are read newest-first; projects and
+ * certifications append. An insert at the top moves every later index, so the
+ * reducer shifts the same two row sets a removal shifts -- which is also why
+ * the frozen-by-value rule above is not specific to removals. The add form is
+ * an ordinary block with the section's own edit form in it, so it autosaves and
+ * recovers like every other one.
  */
 export default function TailoredResumeEditor({ resume }) {
   const { state, dispatch } = useApp();
@@ -249,8 +254,10 @@ function EntrySection({ section, entries, save, add, removeEntry, draftOf, Form,
         onSave={add(section)}
       >
         <p className="muted">
-          Written by hand, not by the AI pass. It is added at the end of this section — there is no reordering here
-          yet.
+          Written by hand, not by the AI pass.{' '}
+          {insertsAtTop(section)
+            ? 'It goes first in this section, where the most recent one belongs. There is no reordering here yet, so putting it anywhere else means retyping the entries around it.'
+            : 'It goes last in this section — there is no reordering here yet.'}
         </p>
       </EditableBlock>
     </section>

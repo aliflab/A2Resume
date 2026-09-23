@@ -11,6 +11,7 @@ import {
   isDraftAddress,
   putPendingDraft,
   recordManualEdit,
+  reindexRowsAfterInsertion,
   reindexRowsAfterRemoval,
 } from '../services/tailoredEdits.js';
 
@@ -140,7 +141,7 @@ export const ACTIONS = {
   CLEAR_TAILORING: 'clear_tailoring',
   /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
   UPDATE_TAILORED_SECTION: 'update_tailored_section',
-  /** Append one hand-written entry to a list section. Payload `{ section, value }`. */
+  /** Add one hand-written entry to a list section, at ENTRY_INSERT_AT's position for it. Payload `{ section, value }`. */
   ADD_TAILORED_ENTRY: 'add_tailored_entry',
   /** Delete one entry from a list section. Payload `{ section, index }`. */
   REMOVE_TAILORED_ENTRY: 'remove_tailored_entry',
@@ -312,26 +313,41 @@ function reduce(state, action) {
       };
     }
 
-    // One new entry, appended to a list section. Same shape of guard as the
-    // edit above: an invalid or entirely blank payload returns null from
-    // applyTailoredEntryAdd and leaves state alone.
+    // One new entry added to a list section, at that section's insertion point
+    // (ENTRY_INSERT_AT: top for experience and education, end for the other
+    // two). Same shape of guard as the edit above: an invalid or entirely blank
+    // payload returns null from applyTailoredEntryAdd and leaves state alone.
     //
-    // AN ADD MOVES NO EXISTING INDEX, because it appends. So no pending draft
-    // and no edit-log row is touched apart from the add form's own draft,
-    // which is spent by the add exactly as a block's draft is spent by Save.
+    // AN INSERT AT THE TOP MOVES EVERY LATER INDEX, exactly as a removal does,
+    // and the same two things in this store are addressed by one: `draftEdits`
+    // and `tailorManualEdits`. Both are shifted with the list in this same
+    // transition -- see reindexRowsAfterInsertion for the drift it prevents.
+    // An append moves nothing and that function is a no-op on it, so there is
+    // one path here rather than a branch on the section.
+    //
+    // The add form's own draft is spent by the add, exactly as a block's draft
+    // is spent by Save. It is dropped before the shift, and its
+    // NEW_ENTRY_INDEX address is not an integer, so the shift would not have
+    // touched it either way.
     case ACTIONS.ADD_TAILORED_ENTRY: {
       const { section } = action.payload && typeof action.payload === 'object' ? action.payload : {};
       const remaining = dropPendingDraft(state.draftEdits, section, NEW_ENTRY_INDEX);
       const dropped = remaining !== state.draftEdits;
-      const draftEdits = dropped ? (remaining.length > 0 ? remaining : null) : state.draftEdits;
+      const spent = dropped ? (remaining.length > 0 ? remaining : null) : state.draftEdits;
 
       const result = applyTailoredEntryAdd(state.tailoredResume, action.payload);
-      if (!result) return dropped ? { ...state, draftEdits } : state;
+      if (!result) return dropped ? { ...state, draftEdits: spent } : state;
+      const shifted = reindexRowsAfterInsertion(spent, result.edit.section, result.index);
+      const logged = reindexRowsAfterInsertion(state.tailorManualEdits, result.edit.section, result.index);
       return {
         ...state,
         tailoredResume: result.resume,
-        tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
-        draftEdits,
+        // Recorded AFTER the shift, so the new entry's own row lands on the
+        // index it actually occupies and cannot collide with the displaced row
+        // that used to hold it.
+        tailorManualEdits: recordManualEdit(logged, result.edit),
+        // Emptied means gone, not an empty array -- the same rule as a save.
+        draftEdits: Array.isArray(shifted) && shifted.length === 0 ? null : shifted,
       };
     }
 
