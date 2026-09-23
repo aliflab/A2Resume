@@ -56,6 +56,36 @@
  * worth keeping in storage. A pending draft is not, which is why that one is
  * deliberately excluded.
  *
+ * THE MATCH BATCH IS THE LARGEST THING STORED HERE, AND BOTH HALVES ARE ARTEFACTS
+ * `matchPostings` (the pasted or fetched job descriptions) and `matchResults`
+ * (their scores and gap analyses) are two more ordinary fields, and both are
+ * ARTEFACT_FIELDS, unlike `draftEdits`:
+ * - `matchResults` is one paid AI call per row. Losing it silently would be
+ *   losing money, the same argument that put `coverLetter` in the list.
+ * - `matchPostings` is durable user input that can legitimately be the ONLY
+ *   thing in a session -- there are no route guards, so someone can paste eight
+ *   postings on /match before ever running step 1. If it were not an artefact,
+ *   `hasSessionContent` would call that session empty and the save would remove
+ *   the entry, so a reload would lose all eight. A pending editor draft is the
+ *   opposite case: it is always accompanied by other content and is cleared the
+ *   moment it is spent, which is why it stays out.
+ *
+ * Size is the thing to watch here, because this is the first feature that stores
+ * SEVERAL postings' worth of data rather than one. Two deliberate trims, both
+ * made in `matchRunner` at build time rather than here:
+ * - A result row stores a SUMMARY of the parsed JD, not the whole parse.
+ * - A result row does NOT store the raw JD text. That lives once, on the
+ *   posting, where the user can still edit it. Up to 60k characters each (the
+ *   scraper's cap), so ten copies of it would dominate the whole session.
+ * - A result row's score drops `recommendations` and its embedded `gapAnalysis`,
+ *   the latter being the same deduplication this module performs for the
+ *   pipeline's own score -- done at build time because a Match row has no
+ *   envelope flag to carry the fact.
+ * Measured figures are in `match.manual.js`; re-run `measureBatch()` if the
+ * stored shape changes. Adding these fields needs no SESSION_VERSION bump, for
+ * the same reason `coverLetter` and `draftEdits` did not: a missing key falls
+ * back to its initial value and an unknown key is ignored.
+ *
  * PENDING DRAFTS ARE STORED, BUT THEY ARE NOT THE RESUME
  * `draftEdits` is editor content typed and not yet saved. It rides this same
  * envelope rather than a second storage key, and is validated like any other
@@ -115,6 +145,8 @@ const PERSISTED_FIELDS = {
   tailorManualEdits: 'array',
   draftEdits: 'array',
   coverLetter: 'object',
+  matchPostings: 'array',
+  matchResults: 'object',
   sources: 'flat',
   settings: 'flat',
 };
@@ -134,6 +166,8 @@ const ARTEFACT_FIELDS = [
   'tailorCorrections',
   'tailorManualEdits',
   'coverLetter',
+  'matchPostings',
+  'matchResults',
 ];
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);

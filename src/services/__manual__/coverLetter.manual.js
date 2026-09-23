@@ -465,6 +465,13 @@ export async function testReducer() {
       SET_COVER_LETTER: slice,
       UPDATE_COVER_LETTER: edited,
       CLEAR_COVER_LETTER: undefined,
+      // Match reads the resume and writes nothing to it, so none of these may
+      // disturb a letter.
+      SET_MATCH_POSTINGS: [{ id: 'p1', label: '', text: 'A posting.', url: '', source: 'paste', status: 'pending', error: null }],
+      SET_MATCH_RESULTS: { results: [{ id: 'p1', label: 'A posting', jd: null, score: null, gap: null, error: { message: 'x' } }], resumeFingerprint: 'x', ranAt: '2026-09-23T00:00:00.000Z', provider: 'claude', completed: 0, failed: 1, aborted: false },
+      REMOVE_MATCH_RESULT: { id: 'p1' },
+      CLEAR_MATCH_RESULTS: undefined,
+      CLEAR_MATCH: undefined,
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
       SET_STATUS: 'idle',

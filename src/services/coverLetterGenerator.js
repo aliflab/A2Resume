@@ -38,6 +38,7 @@ import { callStructured } from './aiService.js';
 import { asArray, asObject, asString } from './gapAnalyzer.js';
 import { buildExclusionPromptSection } from '../utils/jdKeywordExclusions.js';
 import { buildGroundingPromptSection, checkCoverLetterGrounding } from '../utils/coverLetterGrounding.js';
+import { fingerprint, isStaleAgainst } from '../utils/artefactFingerprint.js';
 
 /**
  * Cover letter generation gets its own timeout rather than the shared 20s
@@ -354,45 +355,16 @@ export function enforceLength(letterBody, length) {
 // ---------------------------------------------------------------------------
 
 /**
- * A stable short hash of whatever the letter was written from.
+ * Re-exported from `../utils/artefactFingerprint.js`, which is now the one
+ * definition -- `matchRunner` needs the same thing and must not have to import
+ * from the cover letter to get it. Re-exported rather than moved outright so
+ * this module's public API is unchanged, the same shape as `uploadLimits.js`
+ * being re-exported from `pdfParser.js`.
  *
- * WHY A FINGERPRINT AND NOT A LIST OF INVALIDATING ACTIONS
- * The resume changes through at least six paths -- a new tailoring pass, a hand
- * edit, an entry added, an entry removed, approved inferred skills, a discarded
- * pass -- and `RESCORING_ACTIONS` already exists because that list is easy to
- * add to and easy to forget. A letter invalidated by an enumeration of actions
- * would silently stop noticing the day a seventh path is added. A fingerprint
- * compares the thing itself, so any path that changes the resume is caught
- * including ones that do not exist yet. It is also the approach CLAUDE.md
- * already names as the fix for derived-artefact drift.
- *
- * Keys are sorted, so a resume rebuilt by a spread in a different order
- * fingerprints the same. The hash is FNV-1a: not cryptographic, and it does not
- * need to be -- a collision would mean failing to warn about a stale letter,
- * and the consequence of that is bounded by the user reading their own letter.
- *
- * @param {unknown} value
- * @returns {string}
+ * Read that module for why staleness is a fingerprint comparison and not a list
+ * of invalidating actions.
  */
-export function fingerprint(value) {
-  const canonical = (v) => {
-    if (Array.isArray(v)) return v.map(canonical);
-    if (v && typeof v === 'object') {
-      const out = {};
-      for (const key of Object.keys(v).sort()) out[key] = canonical(v[key]);
-      return out;
-    }
-    return v ?? null;
-  };
-
-  const text = JSON.stringify(canonical(value ?? null));
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return `${hash.toString(36)}-${text.length.toString(36)}`;
-}
+export { fingerprint };
 
 /**
  * Whether a stored letter still describes the resume and posting in front of
@@ -408,8 +380,12 @@ export function fingerprint(value) {
 export function isCoverLetterStale(coverLetter, resume, parsedJD) {
   const letter = asObject(coverLetter);
   if (!asString(letter.body).trim()) return null;
-  if (typeof letter.resumeFingerprint !== 'string' || typeof letter.jdFingerprint !== 'string') return null;
-  return letter.resumeFingerprint !== fingerprint(resume) || letter.jdFingerprint !== fingerprint(parsedJD);
+  const resumeStale = isStaleAgainst(letter.resumeFingerprint, resume);
+  const jdStale = isStaleAgainst(letter.jdFingerprint, parsedJD);
+  // Either fingerprint missing means the letter predates them, so nothing can
+  // be concluded. "Cannot tell" is not "fresh".
+  if (resumeStale === null || jdStale === null) return null;
+  return resumeStale || jdStale;
 }
 
 // ---------------------------------------------------------------------------

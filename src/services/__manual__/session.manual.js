@@ -86,8 +86,13 @@ const SAMPLE = {
   // "only the persisted fields are written" compares the stored keys against
   // that list, and an undefined field is dropped by JSON.stringify rather than
   // stored as null. draftEdits was added to PERSISTED_FIELDS without being
-  // added here, so that assertion had been failing since.
+  // added here, so that assertion had been failing since. coverLetter,
+  // matchPostings and matchResults were added the same way and caught by the
+  // same assertion -- this list is the reason that keeps working.
   draftEdits: null,
+  coverLetter: null,
+  matchPostings: null,
+  matchResults: null,
   sources: { resume: 'paste', jobDescription: 'paste', resumeFileName: null, jobDescriptionUrl: null, provider: 'gemini' },
   settings: { provider: 'gemini' },
 };

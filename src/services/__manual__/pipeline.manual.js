@@ -386,6 +386,17 @@ export async function testScenario() {
       MERGE_INFERRED_SKILLS: ['Airflow'],
       SET_DRAFT_EDIT: { section: 'summary', value: 'Typed but not saved. Kubernetes, gRPC, Terraform.' },
       DISCARD_DRAFT_EDIT: { section: 'summary' },
+      // Neither the cover letter nor the Match batch is part of the current
+      // resume, so none of these may move the score -- which is exactly what
+      // this sweep asserts for every action.
+      SET_COVER_LETTER: { body: ['Dear X,', 'Hello.', 'Bye,'].join('\n\n'), tone: 'warm', length: 'short' },
+      UPDATE_COVER_LETTER: { body: ['Dear X,', 'Edited.', 'Bye,'].join('\n\n'), tone: 'warm', length: 'short' },
+      CLEAR_COVER_LETTER: undefined,
+      SET_MATCH_POSTINGS: [{ id: 'p1', label: '', text: 'A posting.', url: '', source: 'paste', status: 'pending', error: null }],
+      SET_MATCH_RESULTS: { results: [{ id: 'p1', label: 'A posting', jd: null, score: null, gap: null, error: { message: 'x' } }], resumeFingerprint: 'x', ranAt: '2026-09-23T00:00:00.000Z', provider: 'claude', completed: 0, failed: 1, aborted: false },
+      REMOVE_MATCH_RESULT: { id: 'p1' },
+      CLEAR_MATCH_RESULTS: undefined,
+      CLEAR_MATCH: undefined,
       CLEAR_ANALYSIS: undefined,
     };
     for (const name of Object.keys(ACTIONS)) {

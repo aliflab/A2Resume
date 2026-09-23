@@ -838,6 +838,16 @@ export async function testEntriesReducer() {
       REMOVE_TAILORED_ENTRY: { section: 'certifications', index: 0 },
       SET_DRAFT_EDIT: { section: 'summary', value: 'typed but not saved' },
       DISCARD_DRAFT_EDIT: { section: 'summary' },
+      // Neither the cover letter nor the Match batch touches the tailored
+      // resume, so each must leave a hand removal exactly as it found it.
+      SET_COVER_LETTER: { body: ['Dear X,', 'Hello.', 'Bye,'].join('\n\n'), tone: 'warm', length: 'short' },
+      UPDATE_COVER_LETTER: { body: ['Dear X,', 'Edited.', 'Bye,'].join('\n\n'), tone: 'warm', length: 'short' },
+      CLEAR_COVER_LETTER: undefined,
+      SET_MATCH_POSTINGS: [{ id: 'p1', label: '', text: 'A posting.', url: '', source: 'paste', status: 'pending', error: null }],
+      SET_MATCH_RESULTS: { results: [{ id: 'p1', label: 'A posting', jd: null, score: null, gap: null, error: { message: 'x' } }], resumeFingerprint: 'x', ranAt: '2026-09-23T00:00:00.000Z', provider: 'claude', completed: 0, failed: 1, aborted: false },
+      REMOVE_MATCH_RESULT: { id: 'p1' },
+      CLEAR_MATCH_RESULTS: undefined,
+      CLEAR_MATCH: undefined,
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
       SET_STATUS: 'idle',

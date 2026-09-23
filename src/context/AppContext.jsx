@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer 
 
 import { recoverBaseline, rescoreCurrentResume } from '../services/currentResume.js';
 import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
+import { removeMatchResult } from '../services/matchRunner.js';
 import {
   NEW_ENTRY_INDEX,
   applyTailoredEdit,
@@ -104,6 +105,33 @@ export const initialState = {
   coverLetter: null,
 
   /**
+   * The Match batch's INPUT: `[{ id, label, text, url, source, status, error }]`,
+   * null when empty. Built by `matchRunner.createPosting`.
+   *
+   * Kept separate from `matchResults` on purpose. This is editable user input --
+   * pasted or fetched job descriptions, and the nicknames given to them -- and it
+   * survives a run so a batch can be re-run, or one posting fixed and the batch
+   * run again, without re-pasting everything. It holds the raw JD text, which is
+   * the largest thing in the Match slice and the reason a result row does not
+   * also carry it.
+   */
+  matchPostings: null,
+
+  /**
+   * The Match batch's OUTPUT:
+   * `{ results: [...], resumeFingerprint, ranAt, provider, completed, failed }`,
+   * null until a batch has run. Built by `matchRunner.runMatchBatch`.
+   *
+   * ONE fingerprint for the whole batch, not one per row: every row was scored
+   * against the same resume in the same run, so no state exists in which some
+   * rows are stale and others are not. See `isMatchStale`.
+   *
+   * Each row is an AI call the user paid for, so nothing here discards a batch
+   * silently -- the staleness notice offers a re-run and waits.
+   */
+  matchResults: null,
+
+  /**
    * Where each artefact came from, for display and for deciding whether a
    * re-run is cheap. Not load-bearing -- nothing branches on it.
    */
@@ -174,6 +202,17 @@ export const ACTIONS = {
   UPDATE_COVER_LETTER: 'update_cover_letter',
   /** Throw the letter away. No payload. */
   CLEAR_COVER_LETTER: 'clear_cover_letter',
+
+  /** The Match batch's input list. Payload is the whole array, or null. */
+  SET_MATCH_POSTINGS: 'set_match_postings',
+  /** A finished Match batch. Payload is the whole slice from runMatchBatch. */
+  SET_MATCH_RESULTS: 'set_match_results',
+  /** Drop one row from the results. Payload `{ id }`. */
+  REMOVE_MATCH_RESULT: 'remove_match_result',
+  /** Throw the results away, keeping the postings so a re-run needs no re-paste. */
+  CLEAR_MATCH_RESULTS: 'clear_match_results',
+  /** Throw the whole batch away, postings included. */
+  CLEAR_MATCH: 'clear_match',
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
@@ -456,6 +495,77 @@ function reduce(state, action) {
     case ACTIONS.CLEAR_COVER_LETTER:
       return state.coverLetter === null ? state : { ...state, coverLetter: null };
 
+    /**
+     * The batch input. Accepts an array or null, and normalises an emptied list
+     * to null -- the same "emptied means gone, not an empty array" rule the
+     * draft and edit-log slices follow, so storage holds nothing to misread.
+     *
+     * Deliberately does NOT require a resume. A user can legitimately paste
+     * several postings before running step 1, and throwing that work away
+     * because the pipeline has not run yet would be the worst kind of tidiness.
+     */
+    case ACTIONS.SET_MATCH_POSTINGS: {
+      const next = Array.isArray(action.payload) && action.payload.length > 0 ? action.payload : null;
+      return next === state.matchPostings ? state : { ...state, matchPostings: next };
+    }
+
+    /**
+     * A finished batch. Requires a resume, for the same reason
+     * SET_TAILORED_RESUME and SET_COVER_LETTER do: a run that finishes after
+     * "Start over" emptied the store would otherwise land in an empty session,
+     * be persisted, and come back on reload as scores with no resume behind them.
+     *
+     * Not in RESCORING_ACTIONS. Match reads the current resume and writes
+     * nothing back to it, so the pipeline's own score is untouched.
+     */
+    case ACTIONS.SET_MATCH_RESULTS: {
+      if (!state.resume) return state;
+      const payload = action.payload;
+      if (!payload || typeof payload !== 'object' || !Array.isArray(payload.results)) return state;
+      return { ...state, matchResults: payload };
+    }
+
+    /**
+     * Drop one row. Addressed by id, never by index -- `matchRunner` generates
+     * an id per posting precisely so a removal cannot drift what any other row
+     * refers to, which is the class of bug `reindexRowsAfterRemoval` exists for
+     * on the Tailor page. With ids there is no index to reindex.
+     *
+     * The batch's fingerprint and `ranAt` are kept: removing a row does not
+     * change when the batch ran or which resume it was scored against, and
+     * clearing them would make a still-stale batch look fresh.
+     */
+    case ACTIONS.REMOVE_MATCH_RESULT: {
+      const batch = state.matchResults;
+      if (!batch || typeof batch !== 'object' || !Array.isArray(batch.results)) return state;
+      const { id } = action.payload && typeof action.payload === 'object' ? action.payload : {};
+      const results = removeMatchResult(batch.results, id);
+      if (results === batch.results) return state;
+      // An emptied batch becomes null rather than a batch with no rows, so the
+      // page falls to its normal empty state instead of rendering a header over
+      // nothing.
+      if (results.length === 0) return { ...state, matchResults: null };
+      return {
+        ...state,
+        matchResults: {
+          ...batch,
+          results,
+          completed: results.filter((r) => r && r.error === null).length,
+          failed: results.filter((r) => r && r.error !== null).length,
+        },
+      };
+    }
+
+    /** Results only. The postings stay, so a re-run costs no re-pasting. */
+    case ACTIONS.CLEAR_MATCH_RESULTS:
+      return state.matchResults === null ? state : { ...state, matchResults: null };
+
+    /** The whole batch. */
+    case ACTIONS.CLEAR_MATCH:
+      return state.matchResults === null && state.matchPostings === null
+        ? state
+        : { ...state, matchResults: null, matchPostings: null };
+
     case ACTIONS.SET_SOURCES:
       return { ...state, sources: { ...state.sources, ...action.payload } };
     case ACTIONS.SET_SETTINGS:
@@ -531,6 +641,12 @@ function reduce(state, action) {
         // without asking, and it is the same rule tailoring already follows:
         // the user explicitly started a new run.
         coverLetter: null,
+        // The RESULTS are derived from the resume, so a new Input run
+        // invalidates them the same way it invalidates tailoring. The POSTINGS
+        // are not: they are pasted job descriptions the user still has, and
+        // re-uploading a resume is no reason to make them paste eight postings
+        // again. So the batch input survives an Input run and its scores do not.
+        matchResults: null,
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
@@ -595,6 +711,8 @@ export function AppProvider({ children }) {
     tailorManualEdits,
     draftEdits,
     coverLetter,
+    matchPostings,
+    matchResults,
     sources,
     settings,
   } = state;
@@ -623,10 +741,12 @@ export function AppProvider({ children }) {
       tailorManualEdits,
       draftEdits,
       coverLetter,
+      matchPostings,
+      matchResults,
       sources,
       settings,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, coverLetter, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, coverLetter, matchPostings, matchResults, sources, settings]);
 
   // Dev-only handle for the __manual__ runners, which have to compare the live
   // store against storage across a reload, and to stand in for an action the

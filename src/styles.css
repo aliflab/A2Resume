@@ -1281,3 +1281,241 @@ a.button {
 .cover-letter__option .muted {
   margin: 0;
 }
+
+/* --------------------------------------------------------------------------
+   Match. Reuses .card, .notice, .actions, .inline-status, .field-label, .row,
+   .chips/.chip and the .buckets block from Analyze (the expanded detail is the
+   same KeywordCoverage component), plus the .page form rules. Only the posting
+   list, the ranked rows and the score block are new.
+   -------------------------------------------------------------------------- */
+
+.match {
+  max-width: 64rem;
+}
+
+.match__head {
+  margin-bottom: 1.5rem;
+}
+
+.match__head h1 {
+  margin: 0 0 0.4rem;
+}
+
+.match > .notice {
+  margin: 0 0 1.5rem;
+}
+
+/* The batch input -------------------------------------------------------- */
+
+.match__postings {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.match__posting {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.match__posting-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.match__posting-main input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.match__posting-meta {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.match__posting-side {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-top: 1.55rem;
+}
+
+.match__status {
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.match__status--running {
+  font-weight: 600;
+  opacity: 1;
+}
+
+.match__status--done {
+  color: #2e8b57;
+  opacity: 1;
+}
+
+.match__status--failed {
+  color: #c0392b;
+  opacity: 1;
+}
+
+.match__add {
+  border: 0;
+  margin: 0;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.match__add:disabled {
+  opacity: 0.55;
+}
+
+.match__add legend {
+  padding: 0;
+}
+
+/* Ranked results --------------------------------------------------------- */
+
+.match__results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.match__results-head h2 {
+  margin: 0;
+}
+
+.match__confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.match__results {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+  counter-reset: none;
+}
+
+.match__row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.match__row--failed {
+  border-left: 3px solid #c0392b;
+}
+
+.match__row-head {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.match__rank {
+  flex: 0 0 1.75rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  opacity: 0.45;
+  line-height: 1.4;
+}
+
+.match__row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.match__row-title {
+  margin: 0 0 0.2rem;
+  font-size: 1.02rem;
+}
+
+.match__row-meta {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+}
+
+.match__row-missing {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+/* A summary chip, not a control: no hover, no expand. */
+.chip--static {
+  cursor: default;
+}
+
+.match__score {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 0.05rem;
+  min-width: 5.5rem;
+}
+
+.match__score-grade {
+  font-size: 1.5rem;
+  line-height: 1.1;
+}
+
+.match__score--good .match__score-grade {
+  color: #2e8b57;
+}
+
+.match__score--mid .match__score-grade {
+  color: #b8860b;
+}
+
+.match__score--poor .match__score-grade {
+  color: #c0392b;
+}
+
+.match__score-pct {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.match__score-total {
+  font-size: 0.78rem;
+}
+
+.match__row-side {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.match__row-detail {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.match__row-detail .notice {
+  margin: 0 0 1rem;
+}

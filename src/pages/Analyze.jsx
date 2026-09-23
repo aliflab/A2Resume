@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS, INFERRED_SKILLS_CATEGORY } from '../context/AppContext.jsx';
+import KeywordCoverage from '../components/analysis/KeywordCoverage.jsx';
 import { CRITERION_LABELS } from '../services/atsScorer.js';
 import { compareScores, describeScoreChange, selectCurrentResume } from '../services/currentResume.js';
 import { inferSkillsFromExperience, shouldOfferSkillInference } from '../services/skillInference.js';
@@ -25,7 +26,6 @@ import { describeError } from '../utils/errorMessages.js';
  */
 
 const asArray = (v) => (Array.isArray(v) ? v : []);
-const PRIORITIES = ['high', 'medium', 'low'];
 
 /** Current name for a criterion; a stored score may carry an older build's label. */
 const criterionLabel = (c) => CRITERION_LABELS[c?.id] ?? c?.label;
@@ -77,7 +77,11 @@ export default function Analyze() {
           No before-tailoring score is saved for this session, so there is nothing to compare this one against.
         </p>
       )}
-      {gapAnalysis && <KeywordCard gap={gapAnalysis} />}
+      {gapAnalysis && (
+        <section className="card">
+          <KeywordCoverage gap={gapAnalysis} />
+        </section>
+      )}
       {atsScore && <RecommendationsCard recommendations={asArray(atsScore.recommendations)} />}
     </section>
   );
@@ -318,97 +322,6 @@ function KeywordMoves({ title, tone, moves, empty, blurb }) {
  * for something most readers never need. It expands per keyword instead, and
  * is also carried in the title attribute for a hover.
  */
-function KeywordCard({ gap }) {
-  const [expanded, setExpanded] = useState(null);
-
-  const buckets = useMemo(
-    () => [
-      { id: 'matched', label: 'Matched', items: asArray(gap.matched), tone: 'ok', blurb: 'Found in your resume as written.' },
-      { id: 'partial', label: 'Partial', items: asArray(gap.partial), tone: 'warn', blurb: 'You said something equivalent, but not the words the posting uses.' },
-      { id: 'missing', label: 'Missing', items: asArray(gap.missing), tone: 'poor', blurb: 'Not found anywhere in your resume.' },
-    ],
-    [gap]
-  );
-
-  const total = gap.totalKeywords ?? 0;
-
-  return (
-    <section className="card">
-      <h2>Keyword coverage</h2>
-      <p className="muted">
-        {total} keyword{total === 1 ? '' : 's'} from the job description · {gap.matchRate}% covered
-        {typeof gap.weightedMatchRate === 'number' && ` · ${gap.weightedMatchRate}% weighted by priority`}
-      </p>
-
-      {total === 0 ? (
-        <p className="muted">
-          {asArray(gap.degraded?.reasons).join(' ') || 'No keywords were extracted from the job description.'}
-        </p>
-      ) : (
-        <div className="buckets">
-          {buckets.map((b) => (
-            <div key={b.id} className="bucket">
-              <h3 className={`bucket__title bucket__title--${b.tone}`}>
-                {b.label} <span className="muted">({b.items.length})</span>
-              </h3>
-              <p className="muted bucket__blurb">{b.blurb}</p>
-
-              {b.items.length === 0 ? (
-                <p className="muted">None.</p>
-              ) : (
-                PRIORITIES.map((priority) => {
-                  const items = b.items.filter((k) => k.priority === priority);
-                  if (items.length === 0) return null;
-                  return (
-                    <div key={priority} className="bucket__group">
-                      <p className="bucket__priority">{priority} priority</p>
-                      <ul className="chips">
-                        {items.map((k) => {
-                          const id = `${b.id}-${k.keyword}`;
-                          const open = expanded === id;
-                          const count = gap.densityMap?.[k.keyword];
-                          return (
-                            <li key={id}>
-                              <button
-                                type="button"
-                                className={`chip chip--${b.tone}${open ? ' chip--open' : ''}`}
-                                onClick={() => setExpanded(open ? null : id)}
-                                title={
-                                  count
-                                    ? `Appears ${count} time${count === 1 ? '' : 's'} in your resume`
-                                    : 'Not found in your resume'
-                                }
-                                aria-expanded={open}
-                              >
-                                {k.keyword}
-                                {count > 1 && <span className="chip__count">{count}</span>}
-                              </button>
-                              {open && (
-                                <p className="chip__detail">
-                                  {count
-                                    ? `Appears ${count} time${count === 1 ? '' : 's'}.`
-                                    : 'Does not appear.'}
-                                  {k.matchedVia && k.matchedVia !== k.keyword && (
-                                    <> Matched via your wording &ldquo;{k.matchedVia}&rdquo;.</>
-                                  )}
-                                </p>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Recommendations
 // ---------------------------------------------------------------------------
