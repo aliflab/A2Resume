@@ -2,18 +2,33 @@ import { useMemo } from 'react';
 import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 
 import ResumeDocument from './ResumeDocument.jsx';
+import CoverLetterDocument from './CoverLetterDocument.jsx';
 
 /**
- * The only module that imports @react-pdf/renderer, and Export.jsx loads it
- * with React.lazy. Same reason pdfParser.js is imported dynamically: a static
- * import would put the PDF engine in the main bundle for every visitor,
- * including the ones who never reach step 4.
+ * The only module that imports @react-pdf/renderer, and both Export.jsx and
+ * CoverLetter.jsx load it with React.lazy. Same reason pdfParser.js is imported
+ * dynamically: a static import would put the PDF engine in the main bundle for
+ * every visitor, including the ones who never reach step 4.
+ *
+ * WHY THE TEMPLATE IS CHOSEN BY A STRING AND NOT PASSED IN
+ * A caller passing `<CoverLetterDocument letter={...} />` would have to import
+ * that component, and it imports @react-pdf/renderer -- which pulls the whole
+ * engine back into the caller's chunk and undoes the lazy boundary this file
+ * exists to create. `kind` keeps every react-pdf import on this side of it.
+ * Adding a template means one entry in TEMPLATES, not a change to either page.
  *
  * The preview and the download are built from the same element. What the user
  * sees in the frame is what they get in the file.
  */
-export default function PdfPreview({ resume, fileName }) {
-  const doc = useMemo(() => <ResumeDocument resume={resume} />, [resume]);
+const TEMPLATES = {
+  resume: (data) => <ResumeDocument resume={data} />,
+  coverLetter: (data) => <CoverLetterDocument letter={data} />,
+};
+
+export default function PdfPreview({ kind = 'resume', data, resume, fileName }) {
+  // `resume` is the original prop name and Export.jsx still passes it.
+  const payload = data ?? resume;
+  const doc = useMemo(() => (TEMPLATES[kind] ?? TEMPLATES.resume)(payload), [kind, payload]);
 
   return (
     <>

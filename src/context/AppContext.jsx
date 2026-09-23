@@ -86,6 +86,24 @@ export const initialState = {
   draftEdits: null,
 
   /**
+   * The generated cover letter and everything that travels with it:
+   * `{ body, tone, length, grounding, lengthCheck, resumeFingerprint,
+   *    jdFingerprint, provider, model, edited, generatedAt, ... }`.
+   * Null until one is generated. Built by `coverLetterGenerator`.
+   *
+   * IT IS A SIBLING OF THE RESUME, NOT PART OF IT. Nothing scores it, the
+   * resume export never reads it, and it is never an input to
+   * `mergeNonDestructiveResume`. It is derived FROM the current resume, which is
+   * why it carries `resumeFingerprint`: a letter cannot be kept in sync by
+   * enumerating the actions that change the resume (that list is
+   * RESCORING_ACTIONS, and it exists because such lists get forgotten), so
+   * staleness is detected by comparing the fingerprint instead. See
+   * `isCoverLetterStale`. Nothing here auto-discards or auto-regenerates it --
+   * regenerating is a real paid AI call, so it is always the user's choice.
+   */
+  coverLetter: null,
+
+  /**
    * Where each artefact came from, for display and for deciding whether a
    * re-run is cheap. Not load-bearing -- nothing branches on it.
    */
@@ -149,6 +167,13 @@ export const ACTIONS = {
   SET_DRAFT_EDIT: 'set_draft_edit',
   /** Throw one pending draft away. Payload `{ section, index }`. */
   DISCARD_DRAFT_EDIT: 'discard_draft_edit',
+
+  /** A generated cover letter. Payload is the whole slice from coverLetterGenerator. */
+  SET_COVER_LETTER: 'set_cover_letter',
+  /** A hand edit to the letter body. Payload is the rebuilt slice (grounding re-checked). */
+  UPDATE_COVER_LETTER: 'update_cover_letter',
+  /** Throw the letter away. No payload. */
+  CLEAR_COVER_LETTER: 'clear_cover_letter',
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
@@ -405,6 +430,32 @@ function reduce(state, action) {
       return { ...state, draftEdits: remaining.length > 0 ? remaining : null };
     }
 
+    /**
+     * A generated letter, or a hand-edited one. Both carry the whole slice
+     * (body, tone, length, grounding, fingerprints) because those parts are
+     * only meaningful together -- a body stored without the grounding report
+     * that describes it would render as "no warnings" rather than "not checked".
+     *
+     * Requires a resume, for the same reason SET_TAILORED_RESUME does: a
+     * generation that finishes after "Start over" emptied the store would
+     * otherwise land in an empty session, be persisted, and come back on reload
+     * as a letter with no resume behind it.
+     *
+     * Deliberately NOT in RESCORING_ACTIONS. A cover letter is not the resume;
+     * it changes no keyword the ATS score measures, and rescoring here would
+     * recompute an identical score for every keystroke saved.
+     */
+    case ACTIONS.SET_COVER_LETTER:
+    case ACTIONS.UPDATE_COVER_LETTER: {
+      if (!state.resume) return state;
+      const payload = action.payload && typeof action.payload === 'object' ? action.payload : null;
+      if (!payload || typeof payload.body !== 'string') return state;
+      return { ...state, coverLetter: payload };
+    }
+
+    case ACTIONS.CLEAR_COVER_LETTER:
+      return state.coverLetter === null ? state : { ...state, coverLetter: null };
+
     case ACTIONS.SET_SOURCES:
       return { ...state, sources: { ...state.sources, ...action.payload } };
     case ACTIONS.SET_SETTINGS:
@@ -474,6 +525,12 @@ function reduce(state, action) {
         tailorCorrections: null,
         tailorManualEdits: null,
         draftEdits: null,
+        // The letter is derived from the resume and the posting. A new Input run
+        // replaces both, so keeping it would show a letter written about a job
+        // the session no longer has. This is the one path that discards a letter
+        // without asking, and it is the same rule tailoring already follows:
+        // the user explicitly started a new run.
+        coverLetter: null,
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
@@ -537,6 +594,7 @@ export function AppProvider({ children }) {
     tailorCorrections,
     tailorManualEdits,
     draftEdits,
+    coverLetter,
     sources,
     settings,
   } = state;
@@ -564,10 +622,11 @@ export function AppProvider({ children }) {
       tailorCorrections,
       tailorManualEdits,
       draftEdits,
+      coverLetter,
       sources,
       settings,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, coverLetter, sources, settings]);
 
   // Dev-only handle for the __manual__ runners, which have to compare the live
   // store against storage across a reload, and to stand in for an action the

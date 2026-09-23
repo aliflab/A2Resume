@@ -1214,3 +1214,70 @@ a.button {
 .edit-block__draft button {
   flex: 0 0 auto;
 }
+
+
+/* --------------------------------------------------------------------------
+   Cover letter. Reuses .card, .notice, .actions, .inline-status, .field-label
+   and the .page textarea rule -- only the tone/length option lists are new.
+   The PDF frame reuses .export__preview rather than declaring a second one, so
+   the two preview surfaces cannot drift apart.
+   -------------------------------------------------------------------------- */
+
+.cover-letter {
+  max-width: 56rem;
+}
+
+.cover-letter__head {
+  margin-bottom: 1.5rem;
+}
+
+.cover-letter__head h1 {
+  margin: 0 0 0.4rem;
+}
+
+.cover-letter .notice {
+  margin: 0 0 1.5rem;
+}
+
+.cover-letter .notice ul {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+.cover-letter .notice ul + .muted {
+  margin-bottom: 0;
+}
+
+.cover-letter__options {
+  border: 0;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.cover-letter__options:disabled {
+  opacity: 0.55;
+}
+
+.cover-letter__options legend {
+  padding: 0;
+  margin-bottom: 0.45rem;
+}
+
+.cover-letter__option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.cover-letter__option input {
+  flex: 0 0 auto;
+  margin: 0.2rem 0 0;
+}
+
+.cover-letter__option .muted {
+  margin: 0;
+}

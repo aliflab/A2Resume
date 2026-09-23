@@ -39,6 +39,23 @@
  *   new envelopes read correctly in both directions, so SESSION_VERSION is
  *   unchanged.
  *
+ * THE COVER LETTER RIDES THE SAME ENVELOPE, AND NEEDS NO VERSION BUMP
+ * `coverLetter` is one more `'object'` field. Adding a field is backward
+ * compatible in both directions, which is why `draftEdits` did not need a bump
+ * either: an OLD envelope simply has no `coverLetter` key, `acceptField` never
+ * sees it, and the field falls back to its `initialState` value of null -- the
+ * same path a session that never generated one takes. A NEW envelope read by an
+ * older build has one key it does not know about, and `loadSession` only reads
+ * the names in its own PERSISTED_FIELDS, so it is ignored rather than breaking
+ * the load. SESSION_VERSION is for shape changes that cannot be read at all;
+ * this is not one. A wrong-typed `coverLetter` is dropped on its own like any
+ * other field, and the page then renders its empty state.
+ *
+ * It IS an ARTEFACT_FIELD, unlike `draftEdits`: a letter is real generated work
+ * that cost an AI call, so a session holding nothing but a letter is still
+ * worth keeping in storage. A pending draft is not, which is why that one is
+ * deliberately excluded.
+ *
  * PENDING DRAFTS ARE STORED, BUT THEY ARE NOT THE RESUME
  * `draftEdits` is editor content typed and not yet saved. It rides this same
  * envelope rather than a second storage key, and is validated like any other
@@ -97,6 +114,7 @@ const PERSISTED_FIELDS = {
   tailorCorrections: 'array',
   tailorManualEdits: 'array',
   draftEdits: 'array',
+  coverLetter: 'object',
   sources: 'flat',
   settings: 'flat',
 };
@@ -115,6 +133,7 @@ const ARTEFACT_FIELDS = [
   'changesLog',
   'tailorCorrections',
   'tailorManualEdits',
+  'coverLetter',
 ];
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
