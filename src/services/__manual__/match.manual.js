@@ -47,6 +47,7 @@ import {
   topMissingKeywords,
 } from '../matchRunner.js';
 import { analyzeCompetencyGaps } from '../gapAnalyzer.js';
+import { TOTAL_TIMEOUT_MS as SCRAPER_TOTAL_TIMEOUT_MS } from '../jdScraper.js';
 import { calculateATSScore } from '../atsScorer.js';
 import { fingerprint } from '../../utils/artefactFingerprint.js';
 import {
@@ -657,6 +658,20 @@ function liveState() {
 }
 const storedState = () => JSON.parse(localStorage.getItem(RAW_KEY) || 'null')?.state ?? null;
 
+/**
+ * Anything that can overlap an in-flight scrape must outlast the scraper's OWN
+ * cap, not a round number.
+ *
+ * MEASURED: a real blocked LinkedIn URL walks the whole proxy chain in 28-33s
+ * (32.9s and 30.4s in two headless runs; 31.1s reported from a real browser).
+ * `jdScraper.TOTAL_TIMEOUT_MS` is 45s, so that is the ceiling a fetch can take,
+ * and a 15s default sat *below* it -- which is exactly how a wait for the Fetch
+ * button timed out while the previous fetch was still running and the button
+ * still read "Fetching...". Derived from the scraper's constant rather than
+ * copied, so raising that cap cannot silently re-introduce the bug.
+ */
+const NETWORK_WAIT_MS = SCRAPER_TOTAL_TIMEOUT_MS + 20_000;
+
 async function waitFor(predicate, label, timeoutMs = 15_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -702,6 +717,21 @@ export async function liveAddPostings() {
     check('precondition: on /match with a resume', Boolean(document.querySelector('#match-paste')) && Boolean(before.resume), { onPage: Boolean(document.querySelector('#match-paste')), hasResume: Boolean(before.resume) });
     check('the cost is stated before anything is added', /separate, paid AI call/i.test(document.body.innerText) || /separate AI call/i.test(document.body.innerText));
 
+    // IDEMPOTENT ON PURPOSE. A retry that added a second copy of the sample
+    // batch is what broke the posting-count assertion further down the sequence:
+    // the count check read 4 where it expected 2 and reported one failure on a
+    // step whose own behaviour was fine. Anything this runner added before is
+    // removed first, so running it twice leaves the same two postings.
+    const { ACTIONS } = await import('../../context/AppContext.jsx');
+    const ours = new Set(SAMPLE_POSTINGS.map((sp) => sp.label));
+    const foreign = (before.matchPostings ?? []).filter((p) => !ours.has(p.label));
+    if ((before.matchPostings ?? []).length !== foreign.length) {
+      console.log(`  (clearing ${(before.matchPostings ?? []).length - foreign.length} posting(s) this runner added earlier)`);
+      window.a2resumeDev.dispatch({ type: ACTIONS.SET_MATCH_POSTINGS, payload: foreign.length > 0 ? foreign : null });
+      await waitFor(() => (liveState().matchPostings ?? []).length === foreign.length, 'the earlier copies to go');
+    }
+    const baseline = (liveState().matchPostings ?? []).length;
+
     for (const sample of SAMPLE_POSTINGS) {
       setValue(document.querySelector('#match-paste-label'), sample.label);
       setValue(document.querySelector('#match-paste'), sample.text);
@@ -714,14 +744,19 @@ export async function liveAddPostings() {
     }
 
     const after = liveState();
-    check('both postings are in the store', (after.matchPostings ?? []).length === 2, (after.matchPostings ?? []).map((p) => p.label));
-    check('each got a unique id', new Set(after.matchPostings.map((p) => p.id)).size === 2);
+    // Against the snapshot, not a literal: a session may legitimately already
+    // hold postings the user added themselves.
+    check('both postings are in the store', (after.matchPostings ?? []).length === baseline + 2, { before: baseline, after: (after.matchPostings ?? []).length });
+    check('running this twice does not duplicate them', new Set((after.matchPostings ?? []).map((p) => p.label)).size === (after.matchPostings ?? []).length, (after.matchPostings ?? []).map((p) => p.label));
+    remember({ postingCount: (after.matchPostings ?? []).length });
+    check('each got a unique id', new Set(after.matchPostings.map((p) => p.id)).size === after.matchPostings.length);
     check('their text is stored', after.matchPostings.every((p) => p.text.length > 200));
     check('the paste box was cleared, so the next one starts fresh', document.querySelector('#match-paste').value === '');
     check('storage already carries them', (storedState()?.matchPostings ?? []).length === 2);
     check('NO results yet -- adding costs nothing', after.matchResults === null);
-    check('the run card names the number of calls it will make', /2 separate AI calls/i.test(document.body.innerText), document.body.innerText.match(/.{0,60}separate AI calls.{0,40}/)?.[0]);
-    remember({ labels: SAMPLE_POSTINGS.map((s) => s.label) });
+    const runnableNow = (after.matchPostings ?? []).filter(isRunnablePosting).length;
+    check('the run card names the number of calls it will make', new RegExp(`${runnableNow} separate AI call`, 'i').test(document.body.innerText), document.body.innerText.match(/.{0,60}separate AI call.{0,40}/)?.[0]);
+    remember({ labels: SAMPLE_POSTINGS.map((sp) => sp.label) });
   } catch (err) {
     check(err.message, false, err);
   }
@@ -747,25 +782,42 @@ export async function liveFetchBlockedUrl(url = 'https://www.linkedin.com/jobs/v
     check('the always-visible paste box is there, so the fallback is reachable', Boolean(document.querySelector('#match-paste')));
     check('the page warns about blocked boards up front, before anyone tries', /LinkedIn, Indeed and Glassdoor/.test(document.body.innerText) && /Pasting the text always works/.test(document.body.innerText));
 
+    // A FETCH LEFT RUNNING BY AN EARLIER ATTEMPT IS THE THING TO WAIT OUT FIRST.
+    // Nothing cancels `fetchJobDescriptionFromUrl`, so a previous invocation
+    // that gave up still has one in flight, and while it is the Fetch button
+    // reads "Fetching..." and is disabled. Waiting for the button with a 15s
+    // budget therefore timed out against a 30s+ fetch and reported a Fetch
+    // button that was never missing. Budget from the scraper's own cap.
+    const inFlight = buttonByText(document, /^Fetching\.\.\.$/);
+    if (inFlight) {
+      console.log('  (a fetch from an earlier attempt is still running -- waiting for it to settle)');
+      await waitFor(() => !buttonByText(document, /^Fetching\.\.\.$/), 'the earlier fetch to settle', NETWORK_WAIT_MS);
+    }
+
+    const postingsBefore = (liveState().matchPostings ?? []).length;
+
     setValue(document.querySelector('#match-url'), url);
     const fetchBtn = await waitFor(() => {
       const b = buttonByText(document, /^Fetch$/);
       return b && !b.disabled ? b : null;
-    }, 'the Fetch button');
+    }, 'the Fetch button', NETWORK_WAIT_MS);
     const started = Date.now();
     fetchBtn.click();
-    await waitFor(() => /Fetching/.test(buttonByText(document, /Fetching|^Fetch$/)?.textContent ?? ''), 'the fetching state', 4000);
+    await waitFor(() => /Fetching/.test(buttonByText(document, /Fetching|^Fetch$/)?.textContent ?? ''), 'the fetching state', 8000);
 
     const notice = await waitFor(
       () => [...document.querySelectorAll('.inline-status')].find((n) => /could not|blocked|paste/i.test(n.innerText)),
       'a result notice',
-      60_000
+      NETWORK_WAIT_MS
     );
     console.log(`fetch took ${((Date.now() - started) / 1000).toFixed(1)}s`);
     console.log('NOTICE:', notice.innerText);
     check('it failed rather than feeding a sign-in wall to the parser', /inline-status--error/.test(notice.className), notice.className);
     check('the message tells the user to paste it in instead', /paste/i.test(notice.innerText), notice.innerText);
-    check('no posting was added from a failed fetch', (liveState().matchPostings ?? []).length === 2, (liveState().matchPostings ?? []).length);
+    // Against the count taken at the start of THIS invocation, not a literal.
+    // The literal `2` failed whenever a retry had left a different number
+    // behind, reporting a fabricated failure on a step that had worked.
+    check('no posting was added from a failed fetch', (liveState().matchPostings ?? []).length === postingsBefore, { before: postingsBefore, after: (liveState().matchPostings ?? []).length });
     check('the paste box is still usable', !document.querySelector('#match-paste').disabled);
     check('no AI call was made -- still no results', liveState().matchResults === null);
   } catch (err) {
@@ -783,6 +835,15 @@ export async function liveRun() {
     const count = (before.matchPostings ?? []).filter(isRunnablePosting).length;
     if (count === 0) throw new Error('Add postings first.');
     check('the warning says how many paid calls this is', new RegExp(`${count} separate AI call`, 'i').test(document.body.innerText));
+
+    // A missing key renders "Add a key in Settings" where the Match button goes,
+    // so waiting for the button produced a bare timeout that said nothing about
+    // the actual cause. Check the real precondition and name it.
+    const { getKeyPresence } = await import('../apiKeyService.js');
+    const provider = before.settings?.provider ?? before.sources?.provider ?? null;
+    if (!provider || !getKeyPresence()[provider]) {
+      throw new Error(`No API key stored for the session's provider (${provider ?? 'none selected'}). Add one in Settings, then run this again -- this is the step that spends money, so nothing was called.`);
+    }
 
     const run = await waitFor(() => {
       const b = buttonByText(document, /^Match \d+ posting/);
@@ -1010,7 +1071,19 @@ export async function restoreResume() {
  * edits the resume summary and removes a result -- so run it on test data. The
  * last step puts the summary back and clears the batch it created.
  */
+let liveRunning = false;
+
 export async function runLive({ restart = false } = {}) {
+  // RE-ENTRY GUARD. Pasting the line again while a step is still running was
+  // the root cause of the confusing retry: two invocations interleaved, the
+  // second one waited on a Fetch button the first had already put into
+  // "Fetching...", and it failed at 15s on a step that was working. A step now
+  // refuses to start while one is in flight, and says what to do.
+  if (liveRunning) {
+    console.warn('%cA step is still running. Wait for it to print its result, then paste again.', 'font-weight:bold;color:#b8860b');
+    return false;
+  }
+
   const STEPS = [
     { name: 'add two postings (free)', fn: liveAddPostings },
     { name: 'a blocked LinkedIn URL still says "paste it in" (free, ~30s of real network)', fn: liveFetchBlockedUrl },
@@ -1031,9 +1104,18 @@ export async function runLive({ restart = false } = {}) {
   }
 
   console.log(`%c[${at + 1}/${STEPS.length}] ${STEPS[at].name}`, 'font-weight:bold');
-  const ok = await STEPS[at].fn();
+  liveRunning = true;
+  let ok;
+  try {
+    ok = await STEPS[at].fn();
+  } finally {
+    liveRunning = false;
+  }
   if (!ok) {
-    console.error(`%cSTOPPED at step ${at + 1}. Fix or report the FAIL above; the step did not advance, so the same paste retries it.`, 'font-weight:bold');
+    console.error(
+      `%cSTOPPED at step ${at + 1}: "${STEPS[at].name}". Read the FAIL line above -- it names the assertion, and "1 FAILED" always means one check failed in THIS invocation (the counter is reset at the start of every step, so it is never carried over). The step did not advance, so the same paste retries it.`,
+      'font-weight:bold'
+    );
     return false;
   }
 
