@@ -5,7 +5,7 @@ import {
   SECTION_TITLES,
   certificationHeading,
   contactParts,
-  degreeLine,
+  educationHeading,
   metaLine,
   roleHeading,
   skillLine,
@@ -23,93 +23,86 @@ import {
 } from './pdfParts.jsx';
 
 /**
- * The original resume template, "Classic" in the picker. Built to be read by
- * an ATS first and a person second -- and every other template in this folder
- * is held to the same list:
+ * The dense template: smaller type, tighter margins and spacing, so a long
+ * engineering history fits on fewer pages. Same one-column, real-text,
+ * built-in-Helvetica rules as ResumeDocument (see the notes there).
  *
- * - One column, top to bottom. No tables, no side panels, no icons: a parser
- *   reading a two-column layout interleaves the columns (the same failure
- *   pdfParser.js documents on the way in).
- * - Real text in the built-in Helvetica, never an image, so every word is
- *   selectable and extractable. Standard fonts need no font file, so nothing
- *   is fetched when the PDF is built.
- * - Section headings are plain words ("Experience", not "Where I've been").
- * - No hyphenation (noHyphenation, pdfParts.jsx). react-pdf's default split
- *   "quarterly" into "quar-" / "terly" and a LinkedIn url into two pieces at a
- *   line end; templates.manual.js caught both in this template.
- * - Headings are kept with what they head by grouping, not minPresenceAhead.
- *   See KeepTogether in pdfParts.jsx.
+ * Where the density comes from, and why it is safe for an ATS: a heading and
+ * its location/dates share ONE line, but as one <Text> with a literal " | "
+ * inside it, never as two boxes placed side by side. pdfParser.js joins
+ * fragments with no separator unless pdf.js flags an end of line, so two boxes
+ * on one baseline are exactly how "Senior EngineerJan 2021" would be produced.
+ * A separator that is part of the string cannot be lost.
  *
- * Takes a resume already passed through normalizeResumeForExport, so every
- * field is a string or an array and nothing here needs guarding.
+ * Takes a resume already through normalizeResumeForExport.
  */
 
-const COLOR_TEXT = '#1a1a1a';
-const COLOR_MUTED = '#555555';
+const COLOR_TEXT = '#161616';
+const COLOR_MUTED = '#505050';
 
 const styles = StyleSheet.create({
   page: {
-    paddingVertical: 42,
-    paddingHorizontal: 48,
+    paddingVertical: 28,
+    paddingHorizontal: 34,
     fontFamily: 'Helvetica',
-    fontSize: 10,
-    lineHeight: 1.35,
+    fontSize: 9,
+    lineHeight: 1.25,
     color: COLOR_TEXT,
   },
-  // The gap is load-bearing, not cosmetic. With a 3pt gap the 18pt name's line
-  // box overlapped the contact line and pdf.js extracted "Jane Doejane@x.io"
-  // as one run -- an ATS reading it the same way loses both the name and the
-  // email. Verified by round-tripping the PDF through pdfParser.js.
-  name: { fontFamily: 'Helvetica-Bold', fontSize: 18, lineHeight: 1.2, marginBottom: 8 },
-  contact: { fontSize: 9.5, color: COLOR_MUTED },
+  // Same load-bearing gap as ResumeDocument's name, scaled to the smaller
+  // name. Round-tripped per template in templates.manual.js; do not tighten
+  // without re-running it.
+  name: { fontFamily: 'Helvetica-Bold', fontSize: 15, lineHeight: 1.2, marginBottom: 6 },
+  contact: { fontSize: 8.5, color: COLOR_MUTED },
   // Sections and entries are flat children of the Page, not wrapper Views --
   // see KeepTogether in pdfParts.jsx -- so their spacing lives on the title and
   // on each entry's group, as marginTop so nothing trails past the last line.
   sectionTitle: {
-    marginTop: 13,
+    marginTop: 8,
     fontFamily: 'Helvetica-Bold',
-    fontSize: 10.5,
+    fontSize: 9,
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingBottom: 2,
-    marginBottom: 5,
-    borderBottomWidth: 0.75,
-    borderBottomColor: '#999999',
+    letterSpacing: 0.6,
+    paddingBottom: 1.5,
+    marginBottom: 3,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#888888',
   },
-  entry: { marginTop: 7 },
-  entryHeading: { fontFamily: 'Helvetica-Bold', fontSize: 10.5 },
-  meta: { fontSize: 9.5, color: COLOR_MUTED, marginBottom: 2 },
-  bulletRow: { flexDirection: 'row', marginTop: 1.5 },
-  bulletMark: { width: 10 },
+  entry: { marginTop: 4.5 },
+  heading: { fontFamily: 'Helvetica-Bold' },
+  headingMeta: { fontFamily: 'Helvetica', color: COLOR_MUTED },
+  bulletRow: { flexDirection: 'row', marginTop: 0.75 },
+  bulletMark: { width: 8 },
   bulletText: { flex: 1 },
-  link: { fontSize: 9.5, color: COLOR_MUTED, textDecoration: 'none' },
-  skillRow: { marginBottom: 2 },
+  link: { fontSize: 8.5, color: COLOR_MUTED, textDecoration: 'none' },
+  skillRow: { marginBottom: 1 },
   skillCategory: { fontFamily: 'Helvetica-Bold' },
 });
 
-const bulletProps = { rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText };
-
-function EntryHeader({ heading, meta }) {
+/** "Heading | meta" as one run of text. See the note at the top of the file. */
+function InlineHeading({ heading, meta }) {
+  if (!heading && !meta) return null;
   return (
-    <>
-      {heading ? (
-        <Text style={styles.entryHeading} hyphenationCallback={noHyphenation}>
-          {heading}
-        </Text>
-      ) : null}
-      {meta ? <Text style={styles.meta}>{meta}</Text> : null}
-    </>
+    <Text hyphenationCallback={noHyphenation}>
+      {heading ? <Text style={styles.heading}>{heading}</Text> : null}
+      {heading && meta ? <Text style={styles.headingMeta}>{FIELD_SEPARATOR}</Text> : null}
+      {meta ? <Text style={styles.headingMeta}>{meta}</Text> : null}
+    </Text>
   );
 }
 
 function Links({ links }) {
-  return links.map((link, i) => <UrlText key={i} url={link.url} style={styles.link} />);
+  return links.map((link, i) => (
+    <UrlText key={i} url={link.url} style={styles.link} />
+  ));
 }
+
+const bulletProps = { rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText };
 
 /**
  * `lead` is the section title. It goes inside the first entry's KeepTogether
- * group, and each entry's header is grouped with its first bullet, so neither
- * a section heading nor a job title can be the last line on a page.
+ * group, and each entry's header is grouped with its first bullet -- see
+ * KeepTogether in pdfParts.jsx for why minPresenceAhead is not used.
  */
 function SectionBody({ resume, section, lead }) {
   switch (section) {
@@ -127,7 +120,7 @@ function SectionBody({ resume, section, lead }) {
         <Fragment key={i}>
           <KeepTogether style={i > 0 ? styles.entry : undefined}>
             {leadFor(lead, i)}
-            <EntryHeader heading={roleHeading(e)} meta={metaLine(e)} />
+            <InlineHeading heading={roleHeading(e)} meta={metaLine(e)} />
             <Bullet item={e.bullets[0]} {...bulletProps} />
           </KeepTogether>
           <Bullets items={e.bullets.slice(1)} {...bulletProps} />
@@ -140,7 +133,7 @@ function SectionBody({ resume, section, lead }) {
         <Fragment key={i}>
           <KeepTogether style={i > 0 ? styles.entry : undefined}>
             {leadFor(lead, i)}
-            <EntryHeader heading={p.name} meta="" />
+            <InlineHeading heading={p.name} meta="" />
             {p.description ? (
               <Text hyphenationCallback={noHyphenation}>{p.description}</Text>
             ) : (
@@ -168,7 +161,7 @@ function SectionBody({ resume, section, lead }) {
         <Fragment key={i}>
           <KeepTogether style={i > 0 ? styles.entry : undefined}>
             {leadFor(lead, i)}
-            <EntryHeader heading={[degreeLine(ed), ed.institution].filter(Boolean).join(' — ')} meta={metaLine(ed)} />
+            <InlineHeading heading={educationHeading(ed)} meta={metaLine(ed)} />
             <Bullet item={ed.details[0]} {...bulletProps} />
           </KeepTogether>
           <Bullets items={ed.details.slice(1)} {...bulletProps} />
@@ -189,10 +182,7 @@ function SectionBody({ resume, section, lead }) {
   }
 }
 
-/**
- * @param {{ resume: ReturnType<typeof import('../../services/resumeExport.js').normalizeResumeForExport> }} props
- */
-export default function ResumeDocument({ resume }) {
+export default function TechnicalResumeDocument({ resume }) {
   const contact = contactParts(resume);
 
   return (

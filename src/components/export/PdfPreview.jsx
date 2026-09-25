@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 
-import ResumeDocument from './ResumeDocument.jsx';
+import { resumeDocumentFor } from './resumeDocuments.js';
 import CoverLetterDocument from './CoverLetterDocument.jsx';
 
 /**
@@ -16,19 +16,25 @@ import CoverLetterDocument from './CoverLetterDocument.jsx';
  * engine back into the caller's chunk and undoes the lazy boundary this file
  * exists to create. `kind` keeps every react-pdf import on this side of it.
  * Adding a template means one entry in TEMPLATES, not a change to either page.
+ * The resume kind has several layouts of its own, chosen by `template` (an id
+ * from resumeTemplates.js) for the same reason: the id is a string, the
+ * components stay on this side of the boundary.
  *
  * The preview and the download are built from the same element. What the user
  * sees in the frame is what they get in the file.
  */
 const TEMPLATES = {
-  resume: (data) => <ResumeDocument resume={data} />,
+  resume: (data, template) => {
+    const ResumeLayout = resumeDocumentFor(template);
+    return <ResumeLayout resume={data} />;
+  },
   coverLetter: (data) => <CoverLetterDocument letter={data} />,
 };
 
-export default function PdfPreview({ kind = 'resume', data, resume, fileName }) {
+export default function PdfPreview({ kind = 'resume', data, resume, template, fileName }) {
   // `resume` is the original prop name and Export.jsx still passes it.
   const payload = data ?? resume;
-  const doc = useMemo(() => (TEMPLATES[kind] ?? TEMPLATES.resume)(payload), [kind, payload]);
+  const doc = useMemo(() => (TEMPLATES[kind] ?? TEMPLATES.resume)(payload, template), [kind, payload, template]);
 
   return (
     <>

@@ -73,6 +73,14 @@ import { fingerprint, isStaleAgainst } from '../utils/artefactFingerprint.js';
  */
 export const COVER_LETTER_TIMEOUT_MS = 60_000;
 
+/**
+ * Claude effort for the cover letter (see AI_EFFORT_LEVELS in aiService.js).
+ * "medium": prose written under a grounding rule, where quality is visible to
+ * the reader. The grounding check still runs on every result, so a lower tier
+ * cannot quietly let a fabrication through.
+ */
+export const COVER_LETTER_EFFORT = 'medium';
+
 // ---------------------------------------------------------------------------
 // Tone and length
 //
@@ -452,7 +460,7 @@ ${byPriority || '(none listed)'}`;
 export async function generateCoverLetter(
   currentResume,
   parsedJD,
-  { tone = DEFAULT_TONE, length = DEFAULT_LENGTH, provider, apiKey, model, timeoutMs } = {}
+  { tone = DEFAULT_TONE, length = DEFAULT_LENGTH, provider, apiKey, model, timeoutMs, effort, onModelFallback } = {}
 ) {
   const resume = asObject(currentResume);
   if (Object.keys(resume).length === 0) {
@@ -481,6 +489,8 @@ Every employer, tool, skill and outcome you mention must come from that resume j
     userPrompt,
     schema: COVER_LETTER_SCHEMA,
     timeoutMs: timeoutMs ?? COVER_LETTER_TIMEOUT_MS,
+    effort: effort ?? COVER_LETTER_EFFORT,
+    onModelFallback,
   });
 
   const body = assembleLetterBody(result.data, resume);

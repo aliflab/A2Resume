@@ -40,6 +40,15 @@ import {
  */
 export const RESUME_PARSE_TIMEOUT_MS = 90_000;
 
+/**
+ * Claude effort for the resume parse (see AI_EFFORT_LEVELS in aiService.js).
+ * "low": this is transcription into a schema, not reasoning -- the prompt's
+ * whole point is that the model must NOT interpret. The Anthropic guidance puts
+ * extraction and classification at low. Lower effort does not weaken the
+ * backstops: checkTranscriptionFidelity still runs on every result.
+ */
+export const RESUME_PARSE_EFFORT = 'low';
+
 /** Inlined rather than shared via $ref -- not every provider resolves refs. */
 const linkArray = {
   type: 'array',
@@ -192,7 +201,7 @@ Return only the json object. No prose, no commentary, no code fences.`;
  *   never appear in `rawText` -- see utils/transcriptionFidelity.js. Treat it
  *   like `salvaged`: a signal the prompt did not hold, not something to ignore.
  */
-export async function parseResumeWithAI(rawText, { provider, apiKey, model, timeoutMs } = {}) {
+export async function parseResumeWithAI(rawText, { provider, apiKey, model, timeoutMs, effort, onModelFallback } = {}) {
   if (typeof rawText !== 'string' || rawText.trim() === '') {
     throw new Error('parseResumeWithAI: rawText is empty.');
   }
@@ -209,6 +218,8 @@ ${rawText}
 --- END RESUME ---`,
     schema: RESUME_SCHEMA,
     timeoutMs: timeoutMs ?? RESUME_PARSE_TIMEOUT_MS,
+    effort: effort ?? RESUME_PARSE_EFFORT,
+    onModelFallback,
   });
 
   // Backstop for the prompt rule above. A diagnostic sibling of `data`, like

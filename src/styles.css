@@ -1191,6 +1191,63 @@ a.button {
   box-sizing: border-box;
 }
 
+/* Template picker: a radio group laid out as cards. The whole card is the
+   label, so the target is large; the radio stays visible for keyboard users. */
+.template-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 1rem;
+  min-width: 0;
+}
+
+.template-picker > legend {
+  margin-top: 0;
+  padding: 0;
+  font-weight: 600;
+}
+
+.template-picker__note {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.template-picker__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+}
+
+.template-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.template-option--selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.template-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.template-option__label {
+  font-weight: 600;
+}
+
+.template-option__description {
+  grid-column: 2;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
 /* Recovered unsaved drafts: the page-level summary, and the per-block banner
    inside an open editor. Both use .notice--warn so they read as "attention,
    not an error" like every other warning in the app. */

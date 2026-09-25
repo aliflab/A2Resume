@@ -1,7 +1,8 @@
 import { Component, Suspense, lazy, useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 
-import { useApp } from '../context/AppContext.jsx';
+import { ACTIONS, useApp } from '../context/AppContext.jsx';
+import { RESUME_TEMPLATES, resolveResumeTemplate } from '../components/export/resumeTemplates.js';
 import {
   buildResumeFileName,
   findUnsupportedPdfCharacters,
@@ -20,13 +21,32 @@ import {
  *
  * Like every other page there is no route guard: loaded cold it shows an empty
  * state pointing back at step 1 instead of rendering a blank PDF.
+ *
+ * THE TEMPLATE CHOICE IS A SETTING, NOT PART OF THE RUN
+ * It is stored as `settings.resumeTemplate`, next to the provider choice, not
+ * as a new pipeline field. What a resume looks like is the user's preference,
+ * not an artefact of one run, so it should outlive the run: CLEAR_ANALYSIS (a
+ * new Input run for a new job) keeps `settings`, and so keeps the template.
+ * "Start over" resets settings along with everything else, the same as the
+ * provider. `settings` is already persisted as a 'flat' block, which keeps
+ * string values only, so no new PERSISTED_FIELDS entry and no SESSION_VERSION
+ * bump were needed. An unknown id read back from storage renders the default
+ * (resolveResumeTemplate), never a blank preview.
+ *
+ * Switching is live: the same normalised resume is handed to a different
+ * layout, and the preview and the download follow it together.
  */
 
 const PdfPreview = lazy(() => import('../components/export/PdfPreview.jsx'));
 
 export default function Export() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const { raw, source } = selectExportSource(state);
+  const template = resolveResumeTemplate(state?.settings?.resumeTemplate);
+  const chooseTemplate = useCallback(
+    (id) => dispatch({ type: ACTIONS.SET_SETTINGS, payload: { resumeTemplate: resolveResumeTemplate(id) } }),
+    [dispatch],
+  );
 
   const resume = useMemo(() => normalizeResumeForExport(raw), [raw]);
   const plainText = useMemo(() => generatePlainText(resume), [resume]);
@@ -78,17 +98,19 @@ export default function Export() {
             {unsupportedChars.map((char) => `"${char}"`).join(' ')}
           </p>
           <p>
-            The PDF uses a standard built-in font that only covers Western European characters, so these may come
-            out wrong or missing. Check the preview. The plain-text copy below is not affected.
+            Every template uses a standard built-in font (Helvetica, or Times for Formal) that only covers Western
+            European characters, so these may come out wrong or missing whichever template you pick. Check the
+            preview. The plain-text copy below is not affected.
           </p>
         </div>
       )}
 
       <section className="card">
         <h2>PDF</h2>
+        <TemplatePicker value={template} onChange={chooseTemplate} />
         <PdfErrorBoundary>
           <Suspense fallback={<p className="muted">Loading the PDF preview...</p>}>
-            <PdfPreview resume={resume} fileName={fileName} />
+            <PdfPreview resume={resume} template={template} fileName={fileName} />
           </Suspense>
         </PdfErrorBoundary>
       </section>
@@ -114,6 +136,39 @@ export default function Export() {
         <textarea id="export-plain-text" readOnly rows={18} value={plainText} />
       </section>
     </section>
+  );
+}
+
+/**
+ * A radio group, so it is one tab stop with arrow-key selection for free. Every
+ * option is a text description rather than a thumbnail: a thumbnail would mean
+ * rendering four PDFs to show one, and the live preview below already shows the
+ * real thing the moment an option is picked.
+ */
+function TemplatePicker({ value, onChange }) {
+  return (
+    <fieldset className="template-picker">
+      <legend className="field-label">Template</legend>
+      <p className="muted template-picker__note">
+        Every template is one column with standard headings and real, selectable text, so an ATS reads them all the
+        same way. Only the look changes.
+      </p>
+      <div className="template-picker__options">
+        {RESUME_TEMPLATES.map((t) => (
+          <label key={t.id} className={`template-option${t.id === value ? ' template-option--selected' : ''}`}>
+            <input
+              type="radio"
+              name="resume-template"
+              value={t.id}
+              checked={t.id === value}
+              onChange={() => onChange(t.id)}
+            />
+            <span className="template-option__label">{t.label}</span>
+            <span className="template-option__description">{t.description}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 

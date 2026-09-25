@@ -8,6 +8,14 @@
 import { callStructured, DEFAULT_TIMEOUT_MS } from './aiService.js';
 import { buildExclusionPromptSection } from '../utils/jdKeywordExclusions.js';
 
+/**
+ * Claude effort for the job-description parse (see AI_EFFORT_LEVELS in
+ * aiService.js). "low", for the same reason as RESUME_PARSE_EFFORT: this is
+ * extraction into a schema. Match runs this once per posting, so it is also
+ * the call whose cost multiplies.
+ */
+export const JD_PARSE_EFFORT = 'low';
+
 export const JD_SCHEMA = {
   type: 'object',
   properties: {
@@ -139,7 +147,7 @@ Return only the json object. No prose, no commentary, no code fences.`;
  */
 export async function parseJobDescriptionWithAI(
   jdText,
-  { provider, apiKey, model, timeoutMs } = {}
+  { provider, apiKey, model, timeoutMs, effort, onModelFallback } = {}
 ) {
   if (typeof jdText !== 'string' || jdText.trim() === '') {
     throw new Error('parseJobDescriptionWithAI: jdText is empty.');
@@ -157,5 +165,7 @@ ${jdText}
 --- END JOB POSTING ---`,
     schema: JD_SCHEMA,
     timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    effort: effort ?? JD_PARSE_EFFORT,
+    onModelFallback,
   });
 }

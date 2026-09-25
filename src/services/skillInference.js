@@ -32,6 +32,14 @@
 import { callStructured, DEFAULT_TIMEOUT_MS } from './aiService.js';
 import { asArray, asObject, asString } from './gapAnalyzer.js';
 
+/**
+ * Claude effort for skill inference (see AI_EFFORT_LEVELS in aiService.js).
+ * "medium", one step up from the parsers: unlike them this call IS a judgment
+ * -- the confidence rubric asks whether a sentence could be true of someone
+ * without the skill -- and it runs once, on request, not per posting.
+ */
+export const SKILL_INFERENCE_EFFORT = 'medium';
+
 export const CONFIDENCE_LEVELS = ['high', 'medium', 'low'];
 
 export const SKILL_INFERENCE_SCHEMA = {
@@ -169,7 +177,7 @@ const normalise = (s) => asString(s).toLowerCase().replace(/[^a-z0-9+#]/g, '');
  *   evidenceLines: number
  * }>}
  */
-export async function inferSkillsFromExperience(parsedResume, { provider, apiKey, model, timeoutMs } = {}) {
+export async function inferSkillsFromExperience(parsedResume, { provider, apiKey, model, timeoutMs, effort, onModelFallback } = {}) {
   const evidence = collectInferenceEvidence(parsedResume);
 
   if (evidence.text.trim() === '') {
@@ -191,6 +199,8 @@ ${evidence.text}
 --- END DESCRIBED WORK ---`,
     schema: SKILL_INFERENCE_SCHEMA,
     timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    effort: effort ?? SKILL_INFERENCE_EFFORT,
+    onModelFallback,
   });
 
   const { suggestions, dropped } = validateSuggestions(asObject(result.data).suggestions, {

@@ -17,6 +17,29 @@
 export const DEFAULT_TIMEOUT_MS = 20_000;
 export const TEST_TIMEOUT_MS = 8_000;
 
+/**
+ * How hard the model should think, as a per-CALL hint. Each caller picks one
+ * (RESUME_PARSE_EFFORT, TAILOR_EFFORT, ...) the way it picks its own timeout.
+ *
+ * Only the Claude entry acts on it today, as `output_config.effort`. That
+ * parameter is GA with no beta header, takes low | medium | high | xhigh | max,
+ * and defaults to "high" when omitted on Claude Opus 5 -- the first model in
+ * the list. Every model in the Claude fallback list accepts "low" and "medium"
+ * (Sonnet 4.6 is the only one without xhigh), so a lower tier never 400s part
+ * way down the chain. Effort also sets adaptive thinking's depth, and thinking
+ * spends the same max_tokens budget, so lower effort is both fewer billed
+ * output tokens and a smaller chance of hitting the ceiling.
+ *
+ * This is BYOK: the user pays for every thinking token. Nothing in this app is
+ * frontier-depth reasoning, so the default is the cheapest tier and a caller
+ * has to ask for more. Other providers ignore the hint; OpenAI's
+ * reasoning_effort and Gemini's thinking budget are different knobs with
+ * different scales, and mapping them is a separate decision.
+ */
+export const AI_EFFORT_LEVELS = ['low', 'medium', 'high'];
+export const DEFAULT_EFFORT = 'low';
+const resolveEffort = (effort) => (AI_EFFORT_LEVELS.includes(effort) ? effort : DEFAULT_EFFORT);
+
 /** Attempts per model on HTTP 429, including the first. */
 const MAX_ATTEMPTS_429 = 3;
 
@@ -483,7 +506,7 @@ const PROVIDERS = {
       };
     },
 
-    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens }) {
+    buildRequest({ apiKey, model, systemPrompt, userPrompt, schema, maxOutputTokens, effort }) {
       const structured = this.structuredMode({ schema, systemPrompt });
 
       const body = {
@@ -493,6 +516,9 @@ const PROVIDERS = {
         max_tokens: maxOutputTokens ? Math.max(maxOutputTokens, 1024) : 16000,
         messages: [{ role: 'user', content: userPrompt }],
         ...structured.body,
+        // Always explicit: omitting it means "high" on Claude Opus 5, which is
+        // the most expensive default this app could pick. See DEFAULT_EFFORT.
+        output_config: { ...structured.body.output_config, effort: resolveEffort(effort) },
       };
       // `system` is a top-level parameter; there is no system message role.
       if (structured.systemPrompt) body.system = structured.systemPrompt;
@@ -574,11 +600,30 @@ export const PROVIDER_LABELS = Object.fromEntries(
  *
  * @returns {Promise<{ text: string, model: string, raw: any }>}
  */
-async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs }) {
+async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs, onModelFallback }) {
   const spec = PROVIDERS[provider];
   let lastError = null;
 
-  for (const model of models) {
+  for (const [index, model] of models.entries()) {
+    // Tell the caller the chain moved on, BEFORE the next request starts: a
+    // real overload makes this the slow part of a run, and a UI that only
+    // knows "working" reads as frozen. Fired once per model after the first,
+    // with why the previous one was abandoned. A throwing listener is the
+    // caller's bug, not a reason to abandon the call.
+    if (index > 0) {
+      try {
+        onModelFallback?.({
+          provider,
+          fromModel: models[index - 1],
+          toModel: model,
+          attempt: index + 1,
+          of: models.length,
+          reason: lastError?.code ?? 'unknown',
+        });
+      } catch {
+        // ignored -- see above
+      }
+    }
     const ctx = { provider, model };
     const { url, init } = spec.buildRequest({ apiKey, model, ...buildArgs });
 
@@ -675,7 +720,11 @@ async function runWithFallback({ provider, apiKey, models, timeoutMs, buildArgs 
  * @param {string} options.userPrompt
  * @param {object} [options.schema] JSON Schema; enables strict/structured mode.
  * @param {number} [options.timeoutMs=DEFAULT_TIMEOUT_MS]
- * @returns {Promise<{ data: any, provider: string, model: string }>}
+ * @param {'low'|'medium'|'high'} [options.effort=DEFAULT_EFFORT] Reasoning depth hint; see AI_EFFORT_LEVELS.
+ * @param {(event: { provider: string, fromModel: string, toModel: string, attempt: number, of: number, reason: string }) => void} [options.onModelFallback]
+ *   Fired when the fallback chain moves to the next model (overload, model
+ *   not found, or rate limit exhausted on the previous one).
+ * @returns {Promise<{ data: any, provider: string, model: string, fenced: boolean, salvaged: boolean, usage: object | null }>}
  */
 export async function callStructured({
   provider,
@@ -685,6 +734,8 @@ export async function callStructured({
   userPrompt,
   schema,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  effort = DEFAULT_EFFORT,
+  onModelFallback,
 }) {
   const spec = PROVIDERS[provider];
   if (!spec) {
@@ -700,19 +751,23 @@ export async function callStructured({
   const key = requireApiKey(provider, apiKey);
   const models = model ? [model] : spec.models;
 
-  const { text, model: usedModel } = await runWithFallback({
+  const { text, model: usedModel, raw } = await runWithFallback({
     provider,
     apiKey: key,
     models,
     timeoutMs,
-    buildArgs: { systemPrompt, userPrompt, schema },
+    buildArgs: { systemPrompt, userPrompt, schema, effort },
+    onModelFallback,
   });
 
   const { data, fenced, salvaged } = parseStructuredWithMeta(text, {
     provider,
     model: usedModel,
   });
-  return { data, provider, model: usedModel, fenced, salvaged };
+  // `usage` is the provider's own token accounting, untouched -- a diagnostic
+  // like fenced/salvaged, so the cost of an effort setting can be measured
+  // rather than assumed. Shapes differ per provider; nothing here reads it.
+  return { data, provider, model: usedModel, fenced, salvaged, usage: raw?.usage ?? null };
 }
 
 /**
@@ -743,6 +798,8 @@ export async function testConnection({ provider, apiKey }) {
         userPrompt: 'Reply with {"ok":true}',
         schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
         maxOutputTokens: 16,
+        // A key check needs no reasoning at all.
+        effort: 'low',
       },
     });
     return { success: true, provider, model };

@@ -278,7 +278,9 @@ const pad = (n) => String(n).padStart(2, '0');
 /**
  * "Jane_Doe_Resume_2026-09-13.pdf". Accents are folded to ASCII; a name with
  * no Latin letters at all falls back to "Resume_<date>.pdf" rather than an
- * unreadable or empty filename. No template name while there is only one.
+ * unreadable or empty filename. The template is deliberately not in the name:
+ * the file goes to a recruiter, and "Jane_Doe_Resume_Formal.pdf" tells them
+ * about the tool, not the candidate.
  *
  * @param {ReturnType<typeof normalizeResumeForExport>} resume
  * @param {Date} [date]

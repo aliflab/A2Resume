@@ -146,6 +146,8 @@ export const initialState = {
   settings: {
     /** Provider chosen for the next run. Persisted choice lives in Settings. */
     provider: null,
+    /** Export's PDF layout, an id from resumeTemplates.js. null = the default. Survives CLEAR_ANALYSIS. */
+    resumeTemplate: null,
   },
 
   ui: {

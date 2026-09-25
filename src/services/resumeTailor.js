@@ -49,6 +49,15 @@ import { buildExclusionPromptSection, isExcludedKeyword } from '../utils/jdKeywo
  */
 export const TAILOR_TIMEOUT_MS = 150_000;
 
+/**
+ * Claude effort for the tailoring pass (see AI_EFFORT_LEVELS in aiService.js).
+ * "medium": a constrained rewrite -- work JD keywords in honestly, never invent,
+ * keep every entry -- which is more judgment than extraction. Not "high": the
+ * non-destructive merge and the correction log catch what the model drops, so
+ * paying for frontier-depth reasoning buys little here.
+ */
+export const TAILOR_EFFORT = 'medium';
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -515,7 +524,7 @@ export async function tailorResumeWithAI(
   parsedResume,
   parsedJD,
   gapAnalysis,
-  { provider, apiKey, model, timeoutMs } = {}
+  { provider, apiKey, model, timeoutMs, effort, onModelFallback } = {}
 ) {
   const resume = asObject(parsedResume);
   if (Object.keys(resume).length === 0) {
@@ -555,6 +564,8 @@ Return the edited resume under "resume", and every change you made under "change
     userPrompt,
     schema: TAILOR_SCHEMA,
     timeoutMs: timeoutMs ?? TAILOR_TIMEOUT_MS,
+    effort: effort ?? TAILOR_EFFORT,
+    onModelFallback,
   });
 
   const data = asObject(result.data);
