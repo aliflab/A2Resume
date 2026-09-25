@@ -7,7 +7,7 @@ import { MAX_FILE_SIZE } from '../utils/uploadLimits.js';
 import { runAnalysisPipeline } from '../services/analysisPipeline.js';
 import { getKeyPresence, getApiKey, PROVIDER_IDS } from '../services/apiKeyService.js';
 import { SUPPORTED_PROVIDERS, PROVIDER_LABELS } from '../services/aiService.js';
-import { describeError } from '../utils/errorMessages.js';
+import { describeError, describeModelFallback } from '../utils/errorMessages.js';
 import { describeManualEdits } from '../services/tailoredEdits.js';
 
 /**
@@ -61,6 +61,11 @@ export default function InputPage() {
     [presence]
   );
   const [chosenProvider, setProvider] = useState(() => state.settings?.provider ?? null);
+  // The latest model-fallback event of the current AI step, or null. Page-local
+  // on purpose: transient progress detail, only shown by this page's stage
+  // list, and cleared whenever the stage changes -- a fallback during the
+  // resume parse says nothing about the job-description parse after it.
+  const [modelFallback, setModelFallback] = useState(null);
 
   // Derived during render rather than synced by an effect: the effective
   // provider is the user's choice while it remains usable, otherwise the first
@@ -207,7 +212,11 @@ export default function InputPage() {
           provider,
           apiKey,
           signal: controller.signal,
-          onStage: (id) => dispatch({ type: ACTIONS.SET_STAGE, payload: id }),
+          onStage: (id) => {
+            setModelFallback(null);
+            dispatch({ type: ACTIONS.SET_STAGE, payload: id });
+          },
+          onModelFallback: setModelFallback,
           // Dispatched per step, so a failure at step 3 still leaves steps 1
           // and 2 in the store for the next page to show.
           onResult: (key, value) => dispatch({ type: RESULT_ACTIONS[key], payload: value }),
@@ -226,6 +235,7 @@ export default function InputPage() {
         dispatch({ type: ACTIONS.SET_ERROR, payload: described });
       } finally {
         abortRef.current = null;
+        setModelFallback(null);
       }
     },
     [canRun, dispatch, jdText, jdUrl, navigate, provider, resumeFileName, resumeText]
@@ -407,7 +417,12 @@ export default function InputPage() {
         {/* ------------------------------------------------------------- */}
         {error && <ErrorPanel error={error} onDismiss={() => dispatch({ type: ACTIONS.SET_ERROR, payload: null })} />}
 
-        {running && <StageProgress current={stage} />}
+        {running && (
+          <StageProgress
+            current={stage}
+            note={modelFallback?.stage === stage ? describeModelFallback(modelFallback) : null}
+          />
+        )}
 
         {/* A new run clears tailoring (CLEAR_ANALYSIS), hand edits included.
             Said up front, next to the button that does it. */}
@@ -486,8 +501,13 @@ function Notice({ tone = 'ok', children }) {
  * Per-stage progress rather than one spinner. The two AI calls are slow and
  * the two local steps are instant, so a single spinner would sit still for
  * most of the run and tell the user nothing about where it is.
+ *
+ * `note` replaces the active stage's "working..." when the provider's
+ * fallback chain has moved on to another model. Same list, same row -- it is
+ * a different kind of waiting, not a different stage, and a long pause during
+ * a real overload should say why rather than look frozen.
  */
-function StageProgress({ current }) {
+function StageProgress({ current, note = null }) {
   const currentIndex = PIPELINE_STAGES.findIndex((s) => s.id === current);
 
   return (
@@ -500,7 +520,8 @@ function StageProgress({ current }) {
               {stateName === 'done' ? '✓' : stateName === 'active' ? '•' : '○'}
             </span>
             <span>{s.label}</span>
-            {stateName === 'active' && <span className="muted"> - working...</span>}
+            {stateName === 'active' && !note && <span className="muted"> - working...</span>}
+            {stateName === 'active' && note && <span className="stage__note">{note}</span>}
           </li>
         );
       })}

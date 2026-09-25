@@ -380,6 +380,7 @@ export async function testScenario() {
       REMOVE_TAILORED_ENTRY: { section: 'experience', index: 0 },
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
+      DISMISS_SESSION_NOTICE: undefined,
       SET_STATUS: 'idle',
       SET_STAGE: null,
       SET_ERROR: null,

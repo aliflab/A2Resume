@@ -123,6 +123,34 @@ export const SESSION_STORAGE_NAME = 'session';
 export const SESSION_VERSION = 1;
 
 /**
+ * TWO VERSIONS, TWO QUESTIONS
+ * SESSION_VERSION answers "can this envelope be read at all?" -- a storage
+ * schema. A mismatch is a hard discard, because there is nothing safe to show.
+ *
+ * ARTEFACT_VERSION answers "which build of the app produced these results?"
+ * The envelope reads fine, but a parse, a tailored resume, a cover letter or a
+ * Match score made by an older build is not what this build would make, and
+ * nothing about it looks old. Hydration already rescores the CURRENT score
+ * with this build's scorer; everything else is shown as it was made.
+ *
+ * Bump it (integer) when a change alters what a persisted artefact would
+ * contain for the same input: the parser or JD prompts and schemas, the gap
+ * analyser, the scorer, the tailoring prompt or mergeNonDestructiveResume, the
+ * cover-letter generator or grounding, the Match runner. NOT for UI, copy,
+ * styling or refactors -- a notice on every deploy teaches people to dismiss
+ * it, which is the only way it fails. A bump that is forgotten means no
+ * notice, so producers carry a one-line pointer back here.
+ *
+ * It is stored per SESSION, in `provenance.builtWith`, and is NOT restamped by
+ * an ordinary save -- otherwise the first save after a reload would relabel old
+ * results as current and the notice would vanish on the next reload. It moves
+ * to this build only when the artefacts are replaced wholesale: a new Input
+ * run (CLEAR_ANALYSIS) or Start over (RESET). A session saved before versioning
+ * existed has no stamp and loads as 'unversioned', i.e. older than any build.
+ */
+export const ARTEFACT_VERSION = 1;
+
+/**
  * Rough per-origin localStorage budget. Browsers differ and count UTF-16 code
  * units rather than bytes, but ~5 million characters is the common floor
  * (Chromium, Firefox, Safari), shared across every key on the origin.
@@ -149,6 +177,7 @@ const PERSISTED_FIELDS = {
   matchResults: 'object',
   sources: 'flat',
   settings: 'flat',
+  provenance: 'flat',
 };
 
 export const PERSISTED_FIELD_NAMES = Object.keys(PERSISTED_FIELDS);
@@ -417,3 +446,48 @@ export function measureSession(state) {
   }).length;
   return { total, perField, fractionOfTypicalQuota: total / TYPICAL_QUOTA_CHARS };
 }
+
+// ---------------------------------------------------------------------------
+// Provenance -- was this session's work produced by this build?
+// ---------------------------------------------------------------------------
+
+/** The stamp a session gets when its artefacts are produced by this build. */
+export const freshProvenance = () => ({ builtWith: String(ARTEFACT_VERSION), noticeDismissedFor: null });
+
+/** The stamp for a restored session that predates versioning. */
+export const UNVERSIONED = 'unversioned';
+
+/** Artefacts that are shown as they were made, in the order the notice lists them. */
+const STALE_CANDIDATES = [
+  ['resume', 'how your resume was read'],
+  ['parsedJD', 'how the job description was read'],
+  ['originalAtsScore', 'the "before tailoring" score'],
+  ['tailoredResume', 'your tailored resume'],
+  ['coverLetter', 'your cover letter'],
+  ['matchResults', 'your Match scores'],
+];
+
+/**
+ * Whether the session's artefacts were produced by a different build, and
+ * what to say about it. Pure: the header notice renders exactly this.
+ *
+ * @returns {null | { relation: 'older' | 'newer' | 'different', builtWith: string, artefacts: string[], rescored: boolean }}
+ *   null when there is nothing to warn about: same build, the notice was
+ *   dismissed for this very stamp, or the session holds no artefacts at all
+ *   (input text alone is not a result).
+ */
+export function describeArtefactDrift(state) {
+  const s = isPlainObject(state) ? state : {};
+  const builtWith = typeof s.provenance?.builtWith === 'string' ? s.provenance.builtWith : String(ARTEFACT_VERSION);
+  if (builtWith === String(ARTEFACT_VERSION)) return null;
+  if (s.provenance?.noticeDismissedFor === builtWith) return null;
+
+  const artefacts = STALE_CANDIDATES.filter(([field]) => s[field] != null).map(([, label]) => label);
+  if (artefacts.length === 0 && s.atsScore == null) return null;
+
+  const stamped = Number(builtWith);
+  const relation =
+    builtWith === UNVERSIONED ? 'older' : Number.isFinite(stamped) ? (stamped < ARTEFACT_VERSION ? 'older' : 'newer') : 'different';
+  return { relation, builtWith, artefacts, rescored: s.atsScore != null };
+}
+

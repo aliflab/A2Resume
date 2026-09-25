@@ -3,6 +3,9 @@
  *
  * This is a strict extraction task. Nothing here rewrites, improves, or
  * summarises a resume -- that belongs to the tailoring services, later.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import { callStructured } from './aiService.js';

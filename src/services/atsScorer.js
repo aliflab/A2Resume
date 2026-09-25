@@ -13,6 +13,9 @@
  * three of the six criteria required judgment calls that are documented at
  * their implementations below. Read `breakdown[].notes` before treating a
  * sub-score as objective.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import {

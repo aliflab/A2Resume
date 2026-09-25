@@ -335,6 +335,14 @@ body {
   color: #2e8b57;
 }
 
+/* A fallback note on the active stage: still progress, not an error, so it
+   stays in the text colour -- only the weight changes, and it may wrap. */
+.stage__note {
+  font-weight: 400;
+  flex: 1;
+  min-width: 0;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -1167,6 +1175,15 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.6;
+}
+
+/* The header-level session notice sits above whichever page is routed. */
+.session-notice {
+  margin: 0 0 1.25rem;
+}
+
+.session-notice p:last-child {
+  margin-bottom: 0;
 }
 
 .export .notice {

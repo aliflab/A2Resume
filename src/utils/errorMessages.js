@@ -174,3 +174,29 @@ function describeAiError(err, provider) {
       };
   }
 }
+
+/**
+ * One line for the moment a provider's fallback chain moves to its next model
+ * (the `onModelFallback` event from callStructured). Shown as progress, not as
+ * an error: the run is still going, it is just going slower.
+ *
+ * Keyed on the same codes describeAiFailure maps, so "busy" here and
+ * "overloaded" there are the same condition seen at two different times. It
+ * deliberately does not name the model ids -- "claude-sonnet-4-6" means
+ * nothing to most users -- only the provider and how far down the list it is.
+ *
+ * @param {{ provider?: string, attempt?: number, of?: number, reason?: string } | null} event
+ * @returns {string | null}
+ */
+export function describeModelFallback(event) {
+  if (!event) return null;
+  const name = providerName(event.provider);
+  const why =
+    {
+      server: `${name}'s first-choice model is overloaded`,
+      no_model: `That ${name} model isn't available on your key`,
+      rate_limit: `${name} is rate limiting that model`,
+    }[event.reason] ?? `${name}'s first-choice model didn't respond`;
+  const where = event.attempt && event.of ? ` (${event.attempt} of ${event.of})` : '';
+  return `${why}, so this is trying an alternate model${where}. This can take a little longer.`;
+}

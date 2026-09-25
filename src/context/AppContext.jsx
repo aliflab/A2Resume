@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
 
 import { recoverBaseline, rescoreCurrentResume } from '../services/currentResume.js';
-import { clearSession, loadSession, saveSession } from '../services/sessionPersistence.js';
+import { UNVERSIONED, clearSession, freshProvenance, loadSession, saveSession } from '../services/sessionPersistence.js';
 import { removeMatchResult } from '../services/matchRunner.js';
 import {
   NEW_ENTRY_INDEX,
@@ -150,12 +150,28 @@ export const initialState = {
     resumeTemplate: null,
   },
 
+  /**
+   * Which build produced this session's artefacts, and whether the user has
+   * dismissed the notice about it. `{ builtWith, noticeDismissedFor }`, both
+   * strings or null. See ARTEFACT_VERSION in sessionPersistence.js: it is
+   * restamped only when the artefacts are replaced wholesale (CLEAR_ANALYSIS,
+   * RESET), never by an ordinary save.
+   */
+  provenance: freshProvenance(),
+
   ui: {
     status: 'idle', // 'idle' | 'running' | 'done' | 'error'
     /** Which pipeline step is in flight; null when not running. */
     stage: null,
     /** { message, code, kind, isAuth } -- never a raw Error object. */
     error: null,
+    /**
+     * Why a stored session could NOT be restored: 'incompatible' (a different
+     * SESSION_VERSION) or 'corrupt', else null. Set once by hydrate. The entry
+     * itself is gone by then -- the first save of the empty store removes it --
+     * so this notice is the only trace, and it is not persisted.
+     */
+    restoreIssue: null,
   },
 };
 
@@ -218,6 +234,8 @@ export const ACTIONS = {
 
   SET_SOURCES: 'set_sources',
   SET_SETTINGS: 'set_settings',
+  /** Dismiss the header's session notice: a restore failure, or results from another build. No payload. */
+  DISMISS_SESSION_NOTICE: 'dismiss_session_notice',
 
   SET_STATUS: 'set_status',
   SET_STAGE: 'set_stage',
@@ -573,6 +591,15 @@ function reduce(state, action) {
     case ACTIONS.SET_SETTINGS:
       return { ...state, settings: { ...state.settings, ...action.payload } };
 
+    // Remembered per stamp: dismissing the notice for results made by build 1
+    // does not silence a later notice about build 2.
+    case ACTIONS.DISMISS_SESSION_NOTICE:
+      return {
+        ...state,
+        provenance: { ...state.provenance, noticeDismissedFor: state.provenance?.builtWith ?? null },
+        ui: { ...state.ui, restoreIssue: null },
+      };
+
     case ACTIONS.SET_STATUS:
       return { ...state, ui: { ...state.ui, status: action.payload } };
     case ACTIONS.SET_STAGE:
@@ -649,6 +676,9 @@ function reduce(state, action) {
         // re-uploading a resume is no reason to make them paste eight postings
         // again. So the batch input survives an Input run and its scores do not.
         matchResults: null,
+        // Every artefact above is about to be produced again by THIS build, so
+        // the session's stamp moves with them and any drift notice goes away.
+        provenance: freshProvenance(),
         ui: { ...state.ui, status: 'idle', stage: null, error: null },
       };
 
@@ -682,14 +712,26 @@ const AppContext = createContext(null);
  * above can itself create out of a save taken mid-run. See currentResume.js.
  */
 export function hydrate(base, load = loadSession) {
-  const { state: restored } = load();
-  if (!restored) return base;
+  const { state: restored, reason } = load();
+  if (!restored) {
+    // A session that existed but could not be used is said out loud, not
+    // silently replaced by an empty store. 'missing' is a first visit and
+    // 'unavailable' is blocked storage, which the save status already reports.
+    const issue = reason === 'incompatible' || reason === 'corrupt' ? reason : null;
+    return issue ? { ...base, ui: { ...base.ui, restoreIssue: issue } } : base;
+  }
   return recoverBaseline(
     rescoreCurrentResume({
       ...base,
       ...restored,
       sources: { ...base.sources, ...(restored.sources ?? {}) },
       settings: { ...base.settings, ...(restored.settings ?? {}) },
+      // Never defaulted to this build: a session with no stamp was saved
+      // before stamps existed, so its artefacts are older than any build.
+      provenance: {
+        builtWith: typeof restored.provenance?.builtWith === 'string' ? restored.provenance.builtWith : UNVERSIONED,
+        noticeDismissedFor: restored.provenance?.noticeDismissedFor ?? null,
+      },
       ui: base.ui,
     }),
   );
@@ -717,6 +759,7 @@ export function AppProvider({ children }) {
     matchResults,
     sources,
     settings,
+    provenance,
   } = state;
 
   // Persist after every change to the pipeline slice -- each completed stage,
@@ -747,8 +790,9 @@ export function AppProvider({ children }) {
       matchResults,
       sources,
       settings,
+      provenance,
     });
-  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, coverLetter, matchPostings, matchResults, sources, settings]);
+  }, [resumeText, resume, jobDescription, parsedJD, gapAnalysis, atsScore, originalGapAnalysis, originalAtsScore, tailoredResume, changesLog, tailorCorrections, tailorManualEdits, draftEdits, coverLetter, matchPostings, matchResults, sources, settings, provenance]);
 
   // Dev-only handle for the __manual__ runners, which have to compare the live
   // store against storage across a reload, and to stand in for an action the

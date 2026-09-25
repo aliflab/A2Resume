@@ -34,6 +34,9 @@
  *
  * `onProgress` fires per posting, before and after, so the page can show real
  * per-item progress rather than one opaque spinner over several minutes.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import { parseJobDescriptionWithAI } from './jdParser.js';

@@ -1,8 +1,13 @@
 import { useState, useSyncExternalStore } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router';
 
-import { useApp } from './context/AppContext.jsx';
-import { getPersistenceStatus, hasSessionContent, subscribePersistence } from './services/sessionPersistence.js';
+import { ACTIONS, useApp } from './context/AppContext.jsx';
+import {
+  describeArtefactDrift,
+  getPersistenceStatus,
+  hasSessionContent,
+  subscribePersistence,
+} from './services/sessionPersistence.js';
 
 // The four wizard steps, then the side tools. Nothing here guards anything --
 // every page must survive being opened directly with empty state.
@@ -43,6 +48,11 @@ export default function App() {
       </header>
 
       <main className="shell__main">
+        {/* Inside a .page box: same column as the page below it, and the
+            --line / --accent tokens are scoped to .page. */}
+        <div className="page">
+          <SessionNotice />
+        </div>
         <Outlet key={resetCount} />
       </main>
 
@@ -112,3 +122,73 @@ function SessionControls({ onReset }) {
     </div>
   );
 }
+
+const joinList = (items) =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+
+/**
+ * What the stored session turned out to be, said once, on whatever page the
+ * reload landed on. Two cases, and they are different failures:
+ *
+ * - `ui.restoreIssue`: the session could not be restored at all (a different
+ *   SESSION_VERSION, or unreadable JSON). The store is empty and the old entry
+ *   is already gone, so the notice is the only record that anything was lost.
+ * - describeArtefactDrift: the session restored fine, but its results were
+ *   made by a different build (ARTEFACT_VERSION). They are shown, and this
+ *   says which of them are not what this build would produce.
+ *
+ * Dismissible, not a gate. Dismissing drift is remembered per stamp in the
+ * persisted `provenance`, so it does not come back on every reload.
+ */
+function SessionNotice() {
+  const { state, dispatch } = useApp();
+  const dismiss = () => dispatch({ type: ACTIONS.DISMISS_SESSION_NOTICE });
+
+  const issue = state.ui?.restoreIssue ?? null;
+  if (issue) {
+    return (
+      <div className="notice notice--warn session-notice" role="status">
+        <p>
+          <strong>Your previous session couldn&apos;t be restored.</strong>
+        </p>
+        <p>
+          {issue === 'incompatible'
+            ? 'It was saved by a version of A2Resume that stored its data differently, so it was cleared rather than loaded half-understood.'
+            : 'The saved data could not be read, so it was cleared.'}{' '}
+          Your API keys are not affected. Start again from <Link to="/input">step 1</Link>.
+        </p>
+        <p>
+          <button type="button" className="button" onClick={dismiss}>
+            Dismiss
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  const drift = describeArtefactDrift(state);
+  if (!drift) return null;
+
+  const which = drift.relation === 'newer' ? 'a newer' : drift.relation === 'older' ? 'an earlier' : 'a different';
+  return (
+    <div className="notice notice--warn session-notice" role="status">
+      <p>
+        <strong>These results were made by {which} version of A2Resume.</strong>
+      </p>
+      <p>
+        {drift.rescored ? 'Your current ATS score was recalculated with this version when the page loaded. ' : ''}
+        {drift.artefacts.length > 0
+          ? `${joinList(drift.artefacts).replace(/^./, (c) => c.toUpperCase())} ${drift.artefacts.length === 1 ? 'was' : 'were'} not, and may differ from what this version would produce.`
+          : ''}{' '}
+        To refresh everything, run the analysis again on <Link to="/input">step 1</Link>. Your resume and job
+        description text are kept.
+      </p>
+      <p>
+        <button type="button" className="button" onClick={dismiss}>
+          Got it
+        </button>
+      </p>
+    </div>
+  );
+}
+

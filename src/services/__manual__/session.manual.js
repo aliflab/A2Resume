@@ -95,6 +95,7 @@ const SAMPLE = {
   matchResults: null,
   sources: { resume: 'paste', jobDescription: 'paste', resumeFileName: null, jobDescriptionUrl: null, provider: 'gemini' },
   settings: { provider: 'gemini' },
+  provenance: { builtWith: '1', noticeDismissedFor: null },
 };
 
 /** @returns {boolean} true when every case passes */

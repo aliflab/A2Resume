@@ -17,6 +17,9 @@
  * A missing `experience` array must produce a smaller corpus and a lower
  * score, never a throw. Do not "simplify" those guards away on the strength
  * of what a schema currently promises.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import { SKILL_SYNONYM_GROUPS, getSynonyms, canonicalise, normaliseSkill } from '../utils/skillSynonyms.js';

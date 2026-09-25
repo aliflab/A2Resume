@@ -30,6 +30,9 @@
  * the honest measure of how much the safety net is doing -- if it is always
  * zero the model is disciplined; if it is not, the prompt needs work and the
  * net is the only reason the output is safe.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import { callStructured } from './aiService.js';

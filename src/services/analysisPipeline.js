@@ -38,6 +38,11 @@ import { calculateATSScore } from './atsScorer.js';
  *   step finishes, with the artefact it produced. This is the hook the page
  *   uses to dispatch into AppContext incrementally, so a later failure still
  *   leaves the earlier results on screen.
+ * @param {(event: { stage: StageId, provider: string, fromModel: string, toModel: string, attempt: number, of: number, reason: string }) => void} [args.onModelFallback]
+ *   Fired when an AI step's provider moves to its next model (overload, model
+ *   not found, rate limit exhausted), tagged with the stage it happened in.
+ *   Lets the page say "trying an alternate model" instead of a spinner that
+ *   looks frozen through a real overload.
  * @param {AbortSignal} [args.signal] Abandon the run between steps.
  * @returns {Promise<{ resume: object, parsedJD: object, gapAnalysis: object, atsScore: object, diagnostics: object }>}
  */
@@ -48,6 +53,7 @@ export async function runAnalysisPipeline({
   apiKey,
   onStage,
   onResult,
+  onModelFallback,
   signal,
 }) {
   if (typeof resumeText !== 'string' || resumeText.trim() === '') {
@@ -76,7 +82,11 @@ export async function runAnalysisPipeline({
   // --- 1. Resume ------------------------------------------------------------
   abortIfCancelled();
   onStage?.('parseResume');
-  const resumeResult = await parseResumeWithAI(resumeText, { provider, apiKey });
+  const resumeResult = await parseResumeWithAI(resumeText, {
+    provider,
+    apiKey,
+    onModelFallback: (event) => onModelFallback?.({ ...event, stage: 'parseResume' }),
+  });
   diagnostics.resume = {
     model: resumeResult.model,
     fenced: resumeResult.fenced,
@@ -87,7 +97,11 @@ export async function runAnalysisPipeline({
   // --- 2. Job description ---------------------------------------------------
   abortIfCancelled();
   onStage?.('parseJD');
-  const jdResult = await parseJobDescriptionWithAI(jdText, { provider, apiKey });
+  const jdResult = await parseJobDescriptionWithAI(jdText, {
+    provider,
+    apiKey,
+    onModelFallback: (event) => onModelFallback?.({ ...event, stage: 'parseJD' }),
+  });
   diagnostics.jd = {
     model: jdResult.model,
     fenced: jdResult.fenced,

@@ -474,6 +474,7 @@ export async function testReducer() {
       CLEAR_MATCH: undefined,
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
+      DISMISS_SESSION_NOTICE: undefined,
       SET_STATUS: 'idle',
       SET_STAGE: null,
       SET_ERROR: null,

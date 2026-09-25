@@ -850,6 +850,7 @@ export async function testEntriesReducer() {
       CLEAR_MATCH: undefined,
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
+      DISMISS_SESSION_NOTICE: undefined,
       SET_STATUS: 'idle',
       SET_STAGE: null,
       SET_ERROR: null,
@@ -1584,7 +1585,18 @@ export async function liveEmptySection() {
       return Boolean(heads) && heads.closest('.editor-card').innerText.includes('Your resume has no certifications entries');
     })());
     check('page: the add block is still there, so the section can be refilled', Boolean(document.querySelector('button[aria-label="Add certification"]')));
-    check('SCORE: recomputed without them', after.atsScore !== before.atsScore && consistentLive(after));
+    // A VALUE check, not an identity check. rescoreCurrentResume deliberately
+    // hands back the same object when the recomputed score is equal (its
+    // equalTo short-circuit), and certifications that name no JD keyword move
+    // no sub-score -- so `after.atsScore !== before.atsScore` failed on a
+    // correct rescore. consistentLive compares the stored score with a fresh
+    // recompute of the current resume, which is what "recomputed" means: a
+    // skipped rescore would leave a stale value and still fail it.
+    check('SCORE: matches a fresh recompute of the resume without them', consistentLive(after), {
+      before: before.atsScore?.total,
+      after: after.atsScore?.total,
+      objectReused: after.atsScore === before.atsScore,
+    });
     console.log('Now open /export and run verifyExportAfterEmptying(). Then come back and run restoreEmptiedSection().');
   } catch (err) {
     check(err.message, false, err);

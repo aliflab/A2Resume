@@ -32,6 +32,9 @@
  * editor, the plain-text copy and the PDF. One string cannot drift from itself,
  * and it is what makes a single editable textarea honest: what you edit is
  * exactly what you export.
+ *
+ * Changes what a stored session would contain for the same input? Bump
+ * ARTEFACT_VERSION in sessionPersistence.js, so restored results are flagged.
  */
 
 import { callStructured } from './aiService.js';
