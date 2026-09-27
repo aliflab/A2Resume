@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 
 import { ACTIONS, useApp } from '../context/AppContext.jsx';
 import { RESUME_TEMPLATES, resolveResumeTemplate } from '../components/export/resumeTemplates.js';
+import { accentById, fontById, resolveAccentChoice, resolveFontChoice } from '../components/export/resumeDesign.js';
 import {
   buildResumeFileName,
   findUnsupportedPdfCharacters,
@@ -43,6 +44,10 @@ export default function Export() {
   const { state, dispatch } = useApp();
   const { raw, source } = selectExportSource(state);
   const template = resolveResumeTemplate(state?.settings?.resumeTemplate);
+  // Designer's choices ride on top of whichever template is picked here, so
+  // the download from this page matches what Designer previewed.
+  const accent = resolveAccentChoice(state?.settings?.resumeAccent);
+  const font = resolveFontChoice(state?.settings?.resumeFont);
   const chooseTemplate = useCallback(
     (id) => dispatch({ type: ACTIONS.SET_SETTINGS, payload: { resumeTemplate: resolveResumeTemplate(id) } }),
     [dispatch],
@@ -98,7 +103,7 @@ export default function Export() {
             {unsupportedChars.map((char) => `"${char}"`).join(' ')}
           </p>
           <p>
-            Every template uses a standard built-in font (Helvetica, or Times for Formal) that only covers Western
+            Every template and every Designer font is a standard built-in PDF font (Helvetica, Times or Courier) that only covers Western
             European characters, so these may come out wrong or missing whichever template you pick. Check the
             preview. The plain-text copy below is not affected.
           </p>
@@ -108,9 +113,13 @@ export default function Export() {
       <section className="card">
         <h2>PDF</h2>
         <TemplatePicker value={template} onChange={chooseTemplate} />
+        <p className="muted template-picker__note">
+          Colour: {accentById(accent)?.label ?? 'template default'}. Font: {fontById(font)?.label ?? 'template default'}.{' '}
+          <Link to="/designer">Change them in Designer</Link>.
+        </p>
         <PdfErrorBoundary>
           <Suspense fallback={<p className="muted">Loading the PDF preview...</p>}>
-            <PdfPreview resume={resume} template={template} fileName={fileName} />
+            <PdfPreview resume={resume} template={template} accent={accent} font={font} fileName={fileName} />
           </Suspense>
         </PdfErrorBoundary>
       </section>

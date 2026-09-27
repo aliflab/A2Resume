@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, createContext, useContext, useMemo } from 'react';
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 
 import {
@@ -21,6 +21,8 @@ import {
   noHyphenation,
   presentSections,
 } from './pdfParts.jsx';
+import { resolveResumeTheme } from './resumeDesign.js';
+import { templateById } from './resumeTemplates.js';
 
 /**
  * The original resume template, "Classic" in the picker. Built to be read by
@@ -47,49 +49,65 @@ import {
 const COLOR_TEXT = '#1a1a1a';
 const COLOR_MUTED = '#555555';
 
-const styles = StyleSheet.create({
-  page: {
-    paddingVertical: 42,
-    paddingHorizontal: 48,
-    fontFamily: 'Helvetica',
-    fontSize: 10,
-    lineHeight: 1.35,
-    color: COLOR_TEXT,
-  },
-  // The gap is load-bearing, not cosmetic. With a 3pt gap the 18pt name's line
-  // box overlapped the contact line and pdf.js extracted "Jane Doejane@x.io"
-  // as one run -- an ATS reading it the same way loses both the name and the
-  // email. Verified by round-tripping the PDF through pdfParser.js.
-  name: { fontFamily: 'Helvetica-Bold', fontSize: 18, lineHeight: 1.2, marginBottom: 8 },
-  contact: { fontSize: 9.5, color: COLOR_MUTED },
-  // Sections and entries are flat children of the Page, not wrapper Views --
-  // see KeepTogether in pdfParts.jsx -- so their spacing lives on the title and
-  // on each entry's group, as marginTop so nothing trails past the last line.
-  sectionTitle: {
-    marginTop: 13,
-    fontFamily: 'Helvetica-Bold',
-    fontSize: 10.5,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingBottom: 2,
-    marginBottom: 5,
-    borderBottomWidth: 0.75,
-    borderBottomColor: '#999999',
-  },
-  entry: { marginTop: 7 },
-  entryHeading: { fontFamily: 'Helvetica-Bold', fontSize: 10.5 },
-  meta: { fontSize: 9.5, color: COLOR_MUTED, marginBottom: 2 },
-  bulletRow: { flexDirection: 'row', marginTop: 1.5 },
-  bulletMark: { width: 10 },
-  bulletText: { flex: 1 },
-  link: { fontSize: 9.5, color: COLOR_MUTED, textDecoration: 'none' },
-  skillRow: { marginBottom: 2 },
-  skillCategory: { fontFamily: 'Helvetica-Bold' },
-});
+/**
+ * The template's styles for one theme (resumeDesign.js). Only font faces
+ * and the accent colour vary; every size, spacing and margin is fixed here.
+ */
+function buildStyles({ faces, accent }) {
+  return StyleSheet.create({
+    page: {
+      paddingVertical: 42,
+      paddingHorizontal: 48,
+      fontFamily: faces.regular,
+      fontSize: 10,
+      lineHeight: 1.35,
+      color: COLOR_TEXT,
+    },
+    // The gap is load-bearing, not cosmetic. With a 3pt gap the 18pt name's line
+    // box overlapped the contact line and pdf.js extracted "Jane Doejane@x.io"
+    // as one run -- an ATS reading it the same way loses both the name and the
+    // email. Verified by round-tripping the PDF through pdfParser.js.
+    name: { fontFamily: faces.bold, fontSize: 18, lineHeight: 1.2, marginBottom: 8 },
+    contact: { fontSize: 9.5, color: COLOR_MUTED },
+    // Sections and entries are flat children of the Page, not wrapper Views --
+    // see KeepTogether in pdfParts.jsx -- so their spacing lives on the title and
+    // on each entry's group, as marginTop so nothing trails past the last line.
+    sectionTitle: {
+      marginTop: 13,
+      fontFamily: faces.bold,
+      fontSize: 10.5,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      paddingBottom: 2,
+      marginBottom: 5,
+      borderBottomWidth: 0.75,
+      // Designer's accent lands here and only here: this template has no
+    // other colour. The grey is the template's own look when none is chosen.
+    borderBottomColor: accent ?? '#999999',
+    },
+    entry: { marginTop: 7 },
+    entryHeading: { fontFamily: faces.bold, fontSize: 10.5 },
+    meta: { fontSize: 9.5, color: COLOR_MUTED, marginBottom: 2 },
+    bulletRow: { flexDirection: 'row', marginTop: 1.5 },
+    bulletMark: { width: 10 },
+    bulletText: { flex: 1 },
+    link: { fontSize: 9.5, color: COLOR_MUTED, textDecoration: 'none' },
+    skillRow: { marginBottom: 2 },
+    skillCategory: { fontFamily: faces.bold },
+  });
+}
 
-const bulletProps = { rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText };
+/** No theme passed = this template exactly as designed. */
+const DEFAULT_THEME = resolveResumeTheme(templateById('classic').defaultFont);
+
+// Subcomponents read the built styles from here rather than a module-level
+// constant, because the styles now depend on the theme.
+const StylesContext = createContext(buildStyles(DEFAULT_THEME));
+
+const bulletPropsOf = (styles) => ({ rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText });
 
 function EntryHeader({ heading, meta }) {
+  const styles = useContext(StylesContext);
   return (
     <>
       {heading ? (
@@ -103,6 +121,7 @@ function EntryHeader({ heading, meta }) {
 }
 
 function Links({ links }) {
+  const styles = useContext(StylesContext);
   return links.map((link, i) => <UrlText key={i} url={link.url} style={styles.link} />);
 }
 
@@ -112,6 +131,8 @@ function Links({ links }) {
  * a section heading nor a job title can be the last line on a page.
  */
 function SectionBody({ resume, section, lead }) {
+  const styles = useContext(StylesContext);
+  const bulletProps = bulletPropsOf(styles);
   switch (section) {
     case 'summary':
       // Always directly under the contact header on page 1, so nothing to strand.
@@ -192,30 +213,33 @@ function SectionBody({ resume, section, lead }) {
 /**
  * @param {{ resume: ReturnType<typeof import('../../services/resumeExport.js').normalizeResumeForExport> }} props
  */
-export default function ResumeDocument({ resume }) {
+export default function ResumeDocument({ resume, theme }) {
+  const styles = useMemo(() => buildStyles(theme ?? DEFAULT_THEME), [theme]);
   const contact = contactParts(resume);
 
   return (
-    <Document {...documentProps(resume)}>
-      <Page size="A4" style={styles.page}>
-        <View>
-          {resume.name ? <Text style={styles.name}>{resume.name}</Text> : null}
-          {contact.length > 0 ? (
-            <Text style={styles.contact} hyphenationCallback={noHyphenation}>
-              {contact.join(FIELD_SEPARATOR)}
-            </Text>
-          ) : null}
-        </View>
+    <StylesContext.Provider value={styles}>
+      <Document {...documentProps(resume)}>
+        <Page size="A4" style={styles.page}>
+          <View>
+            {resume.name ? <Text style={styles.name}>{resume.name}</Text> : null}
+            {contact.length > 0 ? (
+              <Text style={styles.contact} hyphenationCallback={noHyphenation}>
+                {contact.join(FIELD_SEPARATOR)}
+              </Text>
+            ) : null}
+          </View>
 
-        {presentSections(resume).map((section) => (
-          <SectionBody
-            key={section}
-            resume={resume}
-            section={section}
-            lead={<Text style={styles.sectionTitle}>{SECTION_TITLES[section]}</Text>}
-          />
-        ))}
-      </Page>
-    </Document>
+          {presentSections(resume).map((section) => (
+            <SectionBody
+              key={section}
+              resume={resume}
+              section={section}
+              lead={<Text style={styles.sectionTitle}>{SECTION_TITLES[section]}</Text>}
+            />
+          ))}
+        </Page>
+      </Document>
+    </StylesContext.Provider>
   );
 }

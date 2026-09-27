@@ -148,6 +148,10 @@ export const initialState = {
     provider: null,
     /** Export's PDF layout, an id from resumeTemplates.js. null = the default. Survives CLEAR_ANALYSIS. */
     resumeTemplate: null,
+    /** Designer's accent colour, an id from resumeDesign.js. null = the template's own. */
+    resumeAccent: null,
+    /** Designer's font family, an id from resumeDesign.js. null = the template's own. */
+    resumeFont: null,
   },
 
   /**

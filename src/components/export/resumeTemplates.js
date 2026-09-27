@@ -28,30 +28,46 @@ export const RESUME_TEMPLATES = [
   {
     id: 'classic',
     label: 'Classic',
-    font: 'Helvetica',
+    defaultFont: 'helvetica',
+    accentUse: 'rules',
     description: 'Clean and even-handed. The safe default for most roles.',
   },
   {
     id: 'technical',
     label: 'Technical',
-    font: 'Helvetica',
+    defaultFont: 'helvetica',
+    accentUse: 'rules',
     description: 'Dense: smaller type and tighter spacing, so more fits on a page. Suits engineering roles.',
   },
   {
     id: 'formal',
     label: 'Formal',
-    font: 'Times',
+    defaultFont: 'times',
+    accentUse: 'rules',
     description: 'Serif type and a traditional centred header. Suits executive and leadership roles.',
   },
   {
     id: 'modern',
     label: 'Modern',
-    font: 'Helvetica',
+    defaultFont: 'helvetica',
+    accentUse: 'text',
     description: 'Airy spacing, dates first on their own line, a coloured accent on headings.',
   },
 ];
 
 export const RESUME_TEMPLATE_IDS = RESUME_TEMPLATES.map((template) => template.id);
+
+/**
+ * `defaultFont` is the family a template is designed in (a FONT_CHOICES id in
+ * resumeDesign.js). `accentUse` says where Designer's accent colour lands,
+ * which is wherever the template ALREADY had colour, never somewhere new:
+ * - 'rules': Classic, Technical and Formal have no accent colour, only a grey
+ *   divider rule at their section headings. An accent recolours that rule and
+ *   nothing else; all text stays near-black.
+ * - 'text': Modern already colours its name, section headings and their bar,
+ *   bullet marks and links. An accent replaces that colour everywhere it was.
+ */
+export const templateById = (id) => RESUME_TEMPLATES.find((t) => t.id === resolveResumeTemplate(id));
 
 /** A known template id, or the default for anything else -- null, a typo, an id from a newer build. */
 export function resolveResumeTemplate(id) {

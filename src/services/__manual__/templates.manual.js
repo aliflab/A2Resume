@@ -227,10 +227,11 @@ const BASE_FIXTURES = ['sample', 'heavy', 'sparse', 'unicode'];
 // Rendering and extraction
 // ---------------------------------------------------------------------------
 
-export async function renderTemplatePdf(templateId, normalized) {
+/** `theme` is a resolved theme (resumeDesign.resolveResumeTheme); omit it for the template as designed. */
+export async function renderTemplatePdf(templateId, normalized, theme) {
   const Doc = RESUME_DOCUMENTS[templateId];
   if (!Doc) throw new Error(`No template "${templateId}"`);
-  return pdf(createElement(Doc, { resume: normalized })).toBlob();
+  return pdf(createElement(Doc, theme ? { resume: normalized, theme } : { resume: normalized })).toBlob();
 }
 
 export async function checkMagicBytes(blob) {
@@ -273,13 +274,13 @@ function headingLines(r) {
  * Render one template with one fixture, read it back through pdfParser.js, and
  * assert everything in the header comment. Returns a result object; logs a table.
  */
-export async function roundTrip(templateId, fixtureName, { printText = false } = {}) {
+export async function roundTrip(templateId, fixtureName, { printText = false, theme } = {}) {
   const resume = normalizeResumeForExport(FIXTURES[fixtureName]);
   const failures = [];
   const fail = (check, detail) => failures.push({ check, detail });
 
   const t0 = performance.now();
-  const blob = await renderTemplatePdf(templateId, resume);
+  const blob = await renderTemplatePdf(templateId, resume, theme);
   const renderMs = Math.round(performance.now() - t0);
 
   const magic = await checkMagicBytes(blob);
@@ -358,6 +359,7 @@ export async function roundTrip(templateId, fixtureName, { printText = false } =
   return {
     template: templateId,
     fixture: fixtureName,
+    blob,
     ok: failures.length === 0,
     pages: pageCount,
     bytes: magic.size,
@@ -402,14 +404,14 @@ export async function testRoundTrips({ templates = RESUME_TEMPLATE_IDS, fixtures
 }
 
 /** Every template across the whole summary-length sweep. Only failures are listed. */
-export async function testPageBreakSweep({ templates = RESUME_TEMPLATE_IDS } = {}) {
+export async function testPageBreakSweep({ templates = RESUME_TEMPLATE_IDS, themeFor } = {}) {
   const fixtures = Object.keys(FIXTURES).filter((name) => name.startsWith('sweep'));
   const rows = [];
   for (const templateId of templates) {
     let pages = new Set();
     let failed = [];
     for (const fixtureName of fixtures) {
-      const r = await roundTrip(templateId, fixtureName);
+      const r = await roundTrip(templateId, fixtureName, { theme: themeFor?.(templateId) });
       pages.add(r.pages);
       if (!r.ok) failed.push(`${fixtureName}: ${r.failures.map((f) => `${f.check} ${typeof f.detail === 'string' ? f.detail : JSON.stringify(f.detail)}`).join(' / ')}`);
     }

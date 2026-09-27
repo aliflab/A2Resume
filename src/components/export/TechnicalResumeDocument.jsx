@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, createContext, useContext, useMemo } from 'react';
 import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
 
 import {
@@ -21,6 +21,8 @@ import {
   noHyphenation,
   presentSections,
 } from './pdfParts.jsx';
+import { resolveResumeTheme } from './resumeDesign.js';
+import { templateById } from './resumeTemplates.js';
 
 /**
  * The dense template: smaller type, tighter margins and spacing, so a long
@@ -40,47 +42,63 @@ import {
 const COLOR_TEXT = '#161616';
 const COLOR_MUTED = '#505050';
 
-const styles = StyleSheet.create({
-  page: {
-    paddingVertical: 28,
-    paddingHorizontal: 34,
-    fontFamily: 'Helvetica',
-    fontSize: 9,
-    lineHeight: 1.25,
-    color: COLOR_TEXT,
-  },
-  // Same load-bearing gap as ResumeDocument's name, scaled to the smaller
-  // name. Round-tripped per template in templates.manual.js; do not tighten
-  // without re-running it.
-  name: { fontFamily: 'Helvetica-Bold', fontSize: 15, lineHeight: 1.2, marginBottom: 6 },
-  contact: { fontSize: 8.5, color: COLOR_MUTED },
-  // Sections and entries are flat children of the Page, not wrapper Views --
-  // see KeepTogether in pdfParts.jsx -- so their spacing lives on the title and
-  // on each entry's group, as marginTop so nothing trails past the last line.
-  sectionTitle: {
-    marginTop: 8,
-    fontFamily: 'Helvetica-Bold',
-    fontSize: 9,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    paddingBottom: 1.5,
-    marginBottom: 3,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#888888',
-  },
-  entry: { marginTop: 4.5 },
-  heading: { fontFamily: 'Helvetica-Bold' },
-  headingMeta: { fontFamily: 'Helvetica', color: COLOR_MUTED },
-  bulletRow: { flexDirection: 'row', marginTop: 0.75 },
-  bulletMark: { width: 8 },
-  bulletText: { flex: 1 },
-  link: { fontSize: 8.5, color: COLOR_MUTED, textDecoration: 'none' },
-  skillRow: { marginBottom: 1 },
-  skillCategory: { fontFamily: 'Helvetica-Bold' },
-});
+/**
+ * The template's styles for one theme (resumeDesign.js). Only font faces
+ * and the accent colour vary; every size, spacing and margin is fixed here.
+ */
+function buildStyles({ faces, accent }) {
+  return StyleSheet.create({
+    page: {
+      paddingVertical: 28,
+      paddingHorizontal: 34,
+      fontFamily: faces.regular,
+      fontSize: 9,
+      lineHeight: 1.25,
+      color: COLOR_TEXT,
+    },
+    // Same load-bearing gap as ResumeDocument's name, scaled to the smaller
+    // name. Round-tripped per template in templates.manual.js; do not tighten
+    // without re-running it.
+    name: { fontFamily: faces.bold, fontSize: 15, lineHeight: 1.2, marginBottom: 6 },
+    contact: { fontSize: 8.5, color: COLOR_MUTED },
+    // Sections and entries are flat children of the Page, not wrapper Views --
+    // see KeepTogether in pdfParts.jsx -- so their spacing lives on the title and
+    // on each entry's group, as marginTop so nothing trails past the last line.
+    sectionTitle: {
+      marginTop: 8,
+      fontFamily: faces.bold,
+      fontSize: 9,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      paddingBottom: 1.5,
+      marginBottom: 3,
+      borderBottomWidth: 0.5,
+      // Designer's accent lands here and only here: this template has no
+    // other colour. The grey is the template's own look when none is chosen.
+    borderBottomColor: accent ?? '#888888',
+    },
+    entry: { marginTop: 4.5 },
+    heading: { fontFamily: faces.bold },
+    headingMeta: { fontFamily: faces.regular, color: COLOR_MUTED },
+    bulletRow: { flexDirection: 'row', marginTop: 0.75 },
+    bulletMark: { width: 8 },
+    bulletText: { flex: 1 },
+    link: { fontSize: 8.5, color: COLOR_MUTED, textDecoration: 'none' },
+    skillRow: { marginBottom: 1 },
+    skillCategory: { fontFamily: faces.bold },
+  });
+}
+
+/** No theme passed = this template exactly as designed. */
+const DEFAULT_THEME = resolveResumeTheme(templateById('technical').defaultFont);
+
+// Subcomponents read the built styles from here rather than a module-level
+// constant, because the styles now depend on the theme.
+const StylesContext = createContext(buildStyles(DEFAULT_THEME));
 
 /** "Heading | meta" as one run of text. See the note at the top of the file. */
 function InlineHeading({ heading, meta }) {
+  const styles = useContext(StylesContext);
   if (!heading && !meta) return null;
   return (
     <Text hyphenationCallback={noHyphenation}>
@@ -92,12 +110,13 @@ function InlineHeading({ heading, meta }) {
 }
 
 function Links({ links }) {
+  const styles = useContext(StylesContext);
   return links.map((link, i) => (
     <UrlText key={i} url={link.url} style={styles.link} />
   ));
 }
 
-const bulletProps = { rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText };
+const bulletPropsOf = (styles) => ({ rowStyle: styles.bulletRow, markStyle: styles.bulletMark, textStyle: styles.bulletText });
 
 /**
  * `lead` is the section title. It goes inside the first entry's KeepTogether
@@ -105,6 +124,8 @@ const bulletProps = { rowStyle: styles.bulletRow, markStyle: styles.bulletMark, 
  * KeepTogether in pdfParts.jsx for why minPresenceAhead is not used.
  */
 function SectionBody({ resume, section, lead }) {
+  const styles = useContext(StylesContext);
+  const bulletProps = bulletPropsOf(styles);
   switch (section) {
     case 'summary':
       // Always directly under the contact header on page 1, so nothing to strand.
@@ -182,30 +203,33 @@ function SectionBody({ resume, section, lead }) {
   }
 }
 
-export default function TechnicalResumeDocument({ resume }) {
+export default function TechnicalResumeDocument({ resume, theme }) {
+  const styles = useMemo(() => buildStyles(theme ?? DEFAULT_THEME), [theme]);
   const contact = contactParts(resume);
 
   return (
-    <Document {...documentProps(resume)}>
-      <Page size="A4" style={styles.page}>
-        <View>
-          {resume.name ? <Text style={styles.name}>{resume.name}</Text> : null}
-          {contact.length > 0 ? (
-            <Text style={styles.contact} hyphenationCallback={noHyphenation}>
-              {contact.join(FIELD_SEPARATOR)}
-            </Text>
-          ) : null}
-        </View>
+    <StylesContext.Provider value={styles}>
+      <Document {...documentProps(resume)}>
+        <Page size="A4" style={styles.page}>
+          <View>
+            {resume.name ? <Text style={styles.name}>{resume.name}</Text> : null}
+            {contact.length > 0 ? (
+              <Text style={styles.contact} hyphenationCallback={noHyphenation}>
+                {contact.join(FIELD_SEPARATOR)}
+              </Text>
+            ) : null}
+          </View>
 
-        {presentSections(resume).map((section) => (
-          <SectionBody
-            key={section}
-            resume={resume}
-            section={section}
-            lead={<Text style={styles.sectionTitle}>{SECTION_TITLES[section]}</Text>}
-          />
-        ))}
-      </Page>
-    </Document>
+          {presentSections(resume).map((section) => (
+            <SectionBody
+              key={section}
+              resume={resume}
+              section={section}
+              lead={<Text style={styles.sectionTitle}>{SECTION_TITLES[section]}</Text>}
+            />
+          ))}
+        </Page>
+      </Document>
+    </StylesContext.Provider>
   );
 }

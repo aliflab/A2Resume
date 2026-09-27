@@ -3,6 +3,8 @@ import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 
 import { resumeDocumentFor } from './resumeDocuments.js';
 import CoverLetterDocument from './CoverLetterDocument.jsx';
+import { resolveResumeTheme } from './resumeDesign.js';
+import { templateById } from './resumeTemplates.js';
 
 /**
  * The only module that imports @react-pdf/renderer, and both Export.jsx and
@@ -20,21 +22,30 @@ import CoverLetterDocument from './CoverLetterDocument.jsx';
  * from resumeTemplates.js) for the same reason: the id is a string, the
  * components stay on this side of the boundary.
  *
+ * `accent` and `font` are Designer's choices (ids from resumeDesign.js, or
+ * null for the template's own). They are resolved here against the template's
+ * own default font, so a page never needs to know which family a template was
+ * designed in.
+ *
  * The preview and the download are built from the same element. What the user
  * sees in the frame is what they get in the file.
  */
 const TEMPLATES = {
-  resume: (data, template) => {
+  resume: (data, template, accent, font) => {
     const ResumeLayout = resumeDocumentFor(template);
-    return <ResumeLayout resume={data} />;
+    const theme = resolveResumeTheme(templateById(template).defaultFont, { accent, font });
+    return <ResumeLayout resume={data} theme={theme} />;
   },
   coverLetter: (data) => <CoverLetterDocument letter={data} />,
 };
 
-export default function PdfPreview({ kind = 'resume', data, resume, template, fileName }) {
+export default function PdfPreview({ kind = 'resume', data, resume, template, accent = null, font = null, fileName }) {
   // `resume` is the original prop name and Export.jsx still passes it.
   const payload = data ?? resume;
-  const doc = useMemo(() => (TEMPLATES[kind] ?? TEMPLATES.resume)(payload, template), [kind, payload, template]);
+  const doc = useMemo(
+    () => (TEMPLATES[kind] ?? TEMPLATES.resume)(payload, template, accent, font),
+    [kind, payload, template, accent, font],
+  );
 
   return (
     <>
