@@ -1,17 +1,31 @@
+import { lazy } from 'react';
 import { createBrowserRouter } from 'react-router';
 
 import App from './App.jsx';
+import LazyPage from './components/LazyPage.jsx';
 import Landing from './pages/Landing.jsx';
 import Workspace from './pages/Workspace.jsx';
 import InputPage from './pages/InputPage.jsx';
 import Analyze from './pages/Analyze.jsx';
 import Tailor from './pages/Tailor.jsx';
 import Export from './pages/Export.jsx';
-import Match from './pages/Match.jsx';
-import CoverLetter from './pages/CoverLetter.jsx';
-import Designer from './pages/Designer.jsx';
 import Settings from './pages/Settings.jsx';
 import NotFound from './pages/NotFound.jsx';
+
+// Loaded on demand, like pdfParser.js and PdfPreview.jsx, to keep the entry
+// chunk under Vite's 500 kB warning without raising the limit.
+//
+// Chosen by measurement, not by guessing (2026-09-27, minified entry chunk):
+// 508.62 kB with every page static; making these three lazy took it to
+// 465.08 kB. They are the side tools -- off the Input -> Analyze -> Tailor ->
+// Export path most visits take -- so a first load rarely needs them.
+// The core wizard stays static on purpose: lazy-loading it would put a fetch
+// between two wizard steps. Tailor (-32.3 kB alone) is the next candidate if
+// the entry chunk grows again; Settings (-4.3 kB) is not worth it, since a new
+// user's first stop is adding a key there.
+const Match = lazy(() => import('./pages/Match.jsx'));
+const CoverLetter = lazy(() => import('./pages/CoverLetter.jsx'));
+const Designer = lazy(() => import('./pages/Designer.jsx'));
 
 export const router = createBrowserRouter([
   {
@@ -26,9 +40,30 @@ export const router = createBrowserRouter([
       { path: 'analyze', element: <Analyze /> },
       { path: 'tailor', element: <Tailor /> },
       { path: 'export', element: <Export /> },
-      { path: 'match', element: <Match /> },
-      { path: 'cover-letter', element: <CoverLetter /> },
-      { path: 'designer', element: <Designer /> },
+      {
+        path: 'match',
+        element: (
+          <LazyPage>
+            <Match />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'cover-letter',
+        element: (
+          <LazyPage>
+            <CoverLetter />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'designer',
+        element: (
+          <LazyPage>
+            <Designer />
+          </LazyPage>
+        ),
+      },
       { path: 'settings', element: <Settings /> },
       { path: '*', element: <NotFound /> },
     ],
