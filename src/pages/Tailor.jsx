@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
@@ -24,12 +24,6 @@ import { describeError } from '../utils/errorMessages.js';
  * empty state pointing back at the step that produces its input.
  */
 
-// The chat is loaded on demand. It is an optional tool on this page, and its
-// classifier, prompts and panel cost ~29 kB in the entry chunk if imported
-// statically -- every visitor would pay for it. The page itself stays static
-// (see "Code splitting" in CLAUDE.md for why the wizard is not lazy).
-const ChatCopilot = lazy(() => import('../components/tailor/ChatCopilot.jsx'));
-
 const asArray = (v) => (Array.isArray(v) ? v : []);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -47,18 +41,6 @@ export default function Tailor() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
-  // Editor blocks open right now, by draft address. Page-local: the chat reads
-  // it so it never applies a proposal underneath a form the user is typing in.
-  const [openBlocks, setOpenBlocks] = useState(() => new Set());
-  const onOpenChange = useCallback((key, open) => {
-    setOpenBlocks((prev) => {
-      if (prev.has(key) === open) return prev;
-      const next = new Set(prev);
-      if (open) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  }, []);
 
   const resume = state.resume ?? null;
   const parsedJD = state.parsedJD ?? null;
@@ -187,21 +169,7 @@ export default function Tailor() {
 
           {corrections.length > 0 && <CorrectionsNotice corrections={corrections} />}
 
-          <ChatBoundary>
-            <Suspense
-              fallback={
-                <section className="card" aria-busy="true">
-                  <p className="muted" role="status">
-                    Loading the chat...
-                  </p>
-                </section>
-              }
-            >
-              <ChatCopilot openBlocks={openBlocks} />
-            </Suspense>
-          </ChatBoundary>
-
-          <TailoredResumeEditor resume={tailored} onOpenChange={onOpenChange} />
+          <TailoredResumeEditor resume={tailored} />
 
           {changesLog.length > 0 && <ChangesList changes={changesLog} edited={edits.length > 0} />}
         </>
@@ -236,36 +204,6 @@ function DiscardConfirmation({ edits, onConfirm, onCancel }) {
       </p>
     </div>
   );
-}
-
-/**
- * A lazy chunk can fail to load (offline, or a redeploy replaced it), and a
- * failed chat must not take the editor down with it. React.lazy caches the
- * rejection, so the message says to reload.
- */
-class ChatBoundary extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { failed: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  render() {
-    if (this.state.failed) {
-      return (
-        <section className="card">
-          <p className="inline-status inline-status--error" role="alert">
-            The chat could not be loaded. Reload the page to try again. Your resume and edits are saved in this
-            browser.
-          </p>
-        </section>
-      );
-    }
-    return this.props.children;
-  }
 }
 
 function EmptyState() {

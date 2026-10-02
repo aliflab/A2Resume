@@ -207,15 +207,11 @@ export const ACTIONS = {
   /** Payload `{ resume, changesLog, corrections, parsedJD }` -- `parsedJD` is the one the pass was built against. */
   SET_TAILORED_RESUME: 'set_tailored_resume',
   CLEAR_TAILORING: 'clear_tailoring',
-  /**
-   * One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js.
-   * An approved chat proposal uses this same action with `origin: 'chat'`, which
-   * changes only the edit log's label -- there is no separate chat mutation path.
-   */
+  /** One hand edit to one section (or one entry) of tailoredResume. See tailoredEdits.js. */
   UPDATE_TAILORED_SECTION: 'update_tailored_section',
   /** Add one hand-written entry to a list section, at ENTRY_INSERT_AT's position for it. Payload `{ section, value }`. */
   ADD_TAILORED_ENTRY: 'add_tailored_entry',
-  /** Delete one entry from a list section. Payload `{ section, index, origin? }`. */
+  /** Delete one entry from a list section. Payload `{ section, index }`. */
   REMOVE_TAILORED_ENTRY: 'remove_tailored_entry',
   /** Autosave one open editor block's unsaved content. Payload `{ section, index, value }`. */
   SET_DRAFT_EDIT: 'set_draft_edit',
@@ -312,16 +308,6 @@ export const RESCORING_ACTIONS = [
   'CLEAR_TAILORING', // pass discarded: current falls back to `resume`
 ];
 
-/**
- * The edit-log row for an edit, marked when it came from an approved chat
- * proposal. The log is what the discard confirmation reads, so a chat edit is
- * named there like any other edit the user is about to lose -- and named as a
- * chat edit, since the user approved it rather than typed it.
- */
-function loggedEdit(edit, payload) {
-  return payload?.origin === 'chat' ? { ...edit, label: `${edit.label} (via chat)` } : edit;
-}
-
 export function appReducer(state, action) {
   const next = reduce(state, action);
   if (next === state) return state;
@@ -410,7 +396,7 @@ function reduce(state, action) {
       return {
         ...state,
         tailoredResume: result.resume,
-        tailorManualEdits: recordManualEdit(state.tailorManualEdits, loggedEdit(result.edit, action.payload)),
+        tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
         draftEdits,
       };
     }
@@ -480,7 +466,7 @@ function reduce(state, action) {
       return {
         ...state,
         tailoredResume: result.resume,
-        tailorManualEdits: recordManualEdit(logged, loggedEdit(result.edit, action.payload)),
+        tailorManualEdits: recordManualEdit(logged, result.edit),
         // Emptied means gone, not an empty array -- the same rule as a save.
         draftEdits: Array.isArray(drafts) && drafts.length === 0 ? null : drafts,
       };
