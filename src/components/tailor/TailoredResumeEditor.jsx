@@ -70,7 +70,7 @@ import {
  * an ordinary block with the section's own edit form in it, so it autosaves and
  * recovers like every other one.
  */
-export default function TailoredResumeEditor({ resume }) {
+export default function TailoredResumeEditor({ resume, onOpenChange }) {
   const { state, dispatch } = useApp();
   const save = (section, index) => (value) =>
     dispatch({ type: ACTIONS.UPDATE_TAILORED_SECTION, payload: { section, index, value } });
@@ -119,6 +119,7 @@ export default function TailoredResumeEditor({ resume }) {
 
         <EditableBlock
           section="header"
+          onOpenChange={onOpenChange}
           recovered={draftOf('header')}
           title={SECTION_LABELS.header}
           editLabel="Edit header"
@@ -138,6 +139,7 @@ export default function TailoredResumeEditor({ resume }) {
 
         <EditableBlock
           section="summary"
+          onOpenChange={onOpenChange}
           recovered={draftOf('summary')}
           title={SECTION_LABELS.summary}
           editLabel="Edit summary"
@@ -150,6 +152,7 @@ export default function TailoredResumeEditor({ resume }) {
 
         <EditableBlock
           section="skills"
+          onOpenChange={onOpenChange}
           recovered={draftOf('skills')}
           title={SECTION_LABELS.skills}
           editLabel="Edit skills"
@@ -183,6 +186,7 @@ export default function TailoredResumeEditor({ resume }) {
           add={add}
           removeEntry={removeEntry}
           draftOf={draftOf}
+          onOpenChange={onOpenChange}
           Form={Form}
           View={View}
         />
@@ -211,7 +215,7 @@ const ENTRY_NOUNS = {
  * new one. Entries are addressed by index for dispatch, but keyed for React on
  * what they say -- see entryBlockKeys.
  */
-function EntrySection({ section, entries, save, add, removeEntry, draftOf, Form, View }) {
+function EntrySection({ section, entries, save, add, removeEntry, draftOf, onOpenChange, Form, View }) {
   const { noun, one } = ENTRY_NOUNS[section];
   const keys = entryBlockKeys(section, entries);
   return (
@@ -225,6 +229,7 @@ function EntrySection({ section, entries, save, add, removeEntry, draftOf, Form,
             key={keys[index]}
             section={section}
             index={index}
+            onOpenChange={onOpenChange}
             recovered={draftOf(section, index)}
             title={describeEntry(section, entry)}
             editLabel={`Edit ${noun} ${index + 1}`}
@@ -279,6 +284,7 @@ function EditableBlock({
   onRemove,
   removeLabel,
   recovered,
+  onOpenChange,
   children,
 }) {
   const { dispatch } = useApp();
@@ -302,6 +308,17 @@ function EditableBlock({
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
   }, [draft, dispatch, section, index]);
+
+  // Tell the page which blocks are open. The chat copilot will not apply a
+  // proposal to an open block: the form's next Save would silently overwrite
+  // it, or applying it would end the draft the user is typing. Keyed by the
+  // block's draft address, so a reindex re-registers it under its new index.
+  useEffect(() => {
+    if (!editing || !onOpenChange) return undefined;
+    const key = draftKey(section, index);
+    onOpenChange(key, true);
+    return () => onOpenChange(key, false);
+  }, [editing, onOpenChange, section, index]);
 
   const close = () => {
     setDraft(null);
