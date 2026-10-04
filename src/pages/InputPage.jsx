@@ -12,6 +12,9 @@ import { describeManualEdits } from '../services/tailoredEdits.js';
 import Icon from '../components/Icon.jsx';
 import ErrorNotice from '../components/ui/ErrorNotice.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
+import FetchProgress from '../components/ui/FetchProgress.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
+import { useElapsed } from '../components/ui/WorkingLine.jsx';
 
 /**
  * Step 1 of the wizard: get a resume and a job description in, pick a
@@ -50,6 +53,9 @@ export default function InputPage() {
   // What the last extraction found, for the file card. Display only: the
   // text itself is `resumeText`, always shown and editable below it.
   const [pdfInfo, setPdfInfo] = useState(null);
+  // Pages read so far by the extraction in flight, from extractTextFromPdf's
+  // onProgress. Display only, cleared when the read ends.
+  const [pdfProgress, setPdfProgress] = useState(null); // { page, pageCount }
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -58,6 +64,9 @@ export default function InputPage() {
   const [jdUrl, setJdUrl] = useState(state.sources?.jobDescriptionUrl ?? '');
   const [urlBusy, setUrlBusy] = useState(false);
   const [urlNotice, setUrlNotice] = useState(null);
+  // The readers the scraper has tried so far, from its onAttempt callback, so a
+  // slow cascade says where it is rather than sitting on "Fetching...".
+  const [urlAttempts, setUrlAttempts] = useState([]);
 
   // --- Provider -------------------------------------------------------------
   // Read once per mount. Settings lives on another route, so a change there
@@ -110,11 +119,12 @@ export default function InputPage() {
 
     setPdfBusy(true);
     setPdfNotice(null);
+    setPdfProgress(null);
     try {
       // Loaded on demand: pdfParser pulls in pdf.js, which is most of the
       // app's weight and is useless to anyone who pastes their resume in.
       const { extractTextFromPdf } = await import('../services/pdfParser.js');
-      const result = await extractTextFromPdf(file);
+      const result = await extractTextFromPdf(file, { onProgress: setPdfProgress });
       setResumeText(result.text);
       setResumeFileName(result.fileName);
       setPdfInfo({ pageCount: result.pageCount, charCount: result.charCount, isLikelyScanned: result.isLikelyScanned });
@@ -136,6 +146,7 @@ export default function InputPage() {
       setPdfInfo(null);
     } finally {
       setPdfBusy(false);
+      setPdfProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, []);
@@ -144,9 +155,12 @@ export default function InputPage() {
     (event) => {
       event.preventDefault();
       setDragging(false);
+      // One read at a time: a second drop while the first is extracting
+      // would race it for the textarea.
+      if (pdfBusy) return;
       handleFile(event.dataTransfer?.files?.[0]);
     },
-    [handleFile]
+    [handleFile, pdfBusy]
   );
 
   // --- Job description: URL -------------------------------------------------
@@ -155,8 +169,11 @@ export default function InputPage() {
 
     setUrlBusy(true);
     setUrlNotice(null);
+    setUrlAttempts([]);
     try {
-      const result = await fetchJobDescriptionFromUrl(jdUrl);
+      const result = await fetchJobDescriptionFromUrl(jdUrl, {
+        onAttempt: (attempt) => setUrlAttempts((tried) => [...tried, attempt]),
+      });
       setJdText(result.text);
       setUrlNotice({
         tone: 'ok',
@@ -297,7 +314,8 @@ export default function InputPage() {
 
             {resumeMode === 'upload' && (
               <div
-                className={`dropzone${dragging ? ' dropzone--active' : ''}`}
+                className={`dropzone${dragging && !pdfBusy ? ' dropzone--active' : ''}${pdfBusy ? ' dropzone--busy' : ''}`}
+                aria-busy={pdfBusy || undefined}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragging(true);
@@ -306,20 +324,40 @@ export default function InputPage() {
                 onDrop={onDrop}
               >
                 <span className="dropzone__icon">
-                  <Icon name="upload" size={22} />
+                  {pdfBusy ? <Spinner size="md" /> : <Icon name="upload" size={22} />}
                 </span>
-                <p className="dropzone__title">{pdfBusy ? 'Reading your PDF…' : 'Drop your resume PDF here'}</p>
+                <p className="dropzone__title" role={pdfBusy ? 'status' : undefined}>
+                  {!pdfBusy
+                    ? 'Drop your resume PDF here'
+                    : pdfProgress
+                      ? `Reading page ${pdfProgress.page} of ${pdfProgress.pageCount}…`
+                      : 'Opening your PDF…'}
+                </p>
+                {pdfBusy && (
+                  <span className="dropzone__progress" aria-hidden="true">
+                    {pdfProgress ? (
+                      <span className="progress-bar progress-bar--determinate">
+                        <span style={{ width: `${(pdfProgress.page / pdfProgress.pageCount) * 100}%` }} />
+                      </span>
+                    ) : (
+                      <span className="progress-bar" />
+                    )}
+                  </span>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="application/pdf,.pdf"
                   id="resume-file"
                   onChange={(e) => handleFile(e.target.files?.[0])}
+                  disabled={pdfBusy}
                   hidden
                 />
-                <label htmlFor="resume-file" className="button">
-                  {pdfBusy ? 'Reading…' : 'Choose a PDF'}
-                </label>
+                {!pdfBusy && (
+                  <label htmlFor="resume-file" className="button">
+                    Choose a PDF
+                  </label>
+                )}
                 <p className="muted">
                   PDF up to {formatBytes(MAX_FILE_SIZE)} &middot; read in your browser, never uploaded
                 </p>
@@ -408,11 +446,12 @@ export default function InputPage() {
                   }
                 }}
               />
-              <button type="button" onClick={handleFetchUrl} disabled={urlBusy || !jdUrl.trim()}>
-                <Icon name="link" size={15} />
+              <button type="button" onClick={handleFetchUrl} disabled={urlBusy || !jdUrl.trim()} aria-busy={urlBusy || undefined}>
+                {urlBusy ? <Spinner /> : <Icon name="link" size={15} />}
                 {urlBusy ? 'Fetching…' : 'Fetch'}
               </button>
             </div>
+            {urlBusy && <FetchProgress attempts={urlAttempts} />}
             <p className="field-hint">
               Fetching goes through public proxies and fails on some boards. LinkedIn, Indeed and Glassdoor block it
               outright.
@@ -578,12 +617,7 @@ const STAGE_COPY = {
  * should say why rather than look frozen. It never names a model id.
  */
 function ProgressWorkspace({ current, provider, note, onCancel }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const started = Date.now();
-    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const elapsed = useElapsed();
 
   const providerName = PROVIDER_LABELS[provider] ?? provider ?? 'your provider';
   const currentIndex = PIPELINE_STAGES.findIndex((s) => s.id === current);

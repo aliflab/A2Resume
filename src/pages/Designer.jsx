@@ -6,6 +6,7 @@ import Icon from '../components/Icon.jsx';
 import TemplatePicker from '../components/export/TemplatePicker.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
+import PreviewSkeleton from '../components/ui/PreviewSkeleton.jsx';
 import { resolveResumeTemplate, templateById } from '../components/export/resumeTemplates.js';
 import {
   ACCENT_CHOICES,
@@ -176,14 +177,7 @@ export default function Designer() {
 
         <div>
           <PreviewBoundary>
-            <Suspense
-              fallback={
-                <div className="preview-loading" role="status">
-                  <span>Preparing the PDF preview…</span>
-                  <span className="progress-bar" aria-hidden="true" />
-                </div>
-              }
-            >
+            <Suspense fallback={<PreviewSkeleton />}>
               <PdfPreview resume={resume} template={template.id} accent={accent} font={font} fileName={fileName} />
             </Suspense>
           </PreviewBoundary>

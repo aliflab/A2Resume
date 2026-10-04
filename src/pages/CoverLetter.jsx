@@ -29,7 +29,10 @@ import Icon from '../components/Icon.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import ErrorNotice from '../components/ui/ErrorNotice.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
+import PreviewSkeleton from '../components/ui/PreviewSkeleton.jsx';
 import ScoreRing from '../components/ui/ScoreRing.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
+import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { gradeTone, gradeVerdict } from '../components/ui/scoreBands.js';
 
 /**
@@ -220,7 +223,14 @@ export default function CoverLetter() {
               </p>
             ) : (
               <p className="actions">
-                <button type="button" className="button button--primary button--lg" onClick={generate} disabled={busy}>
+                <button
+                  type="button"
+                  className="button button--primary button--lg"
+                  onClick={generate}
+                  disabled={busy}
+                  aria-busy={busy || undefined}
+                >
+                  {busy && <Spinner />}
                   {busy ? 'Writing your letter...' : letter ? 'Write a new letter' : 'Write my cover letter'}
                 </button>
                 {letter && <span className="muted">This replaces the letter below, including any edits you made.</span>}
@@ -228,17 +238,19 @@ export default function CoverLetter() {
             )}
 
             {busy && (
-              <div className="loading-line" role="status">
-                <span>Writing from your resume with {PROVIDER_LABELS[provider] ?? provider}…</span>
-                <span className="progress-bar" aria-hidden="true" />
-              </div>
+              <WorkingLine
+                label={`Writing from your resume with ${PROVIDER_LABELS[provider] ?? provider}…`}
+                detail="Then every company and tool it names is checked against your resume."
+              />
             )}
 
             {error && <ErrorNotice compact error={error} onRetry={hasKey ? generate : undefined} />}
           </section>
 
+          {!letter && busy && <LetterSkeleton />}
+
           {letter && (
-            <>
+            <div className={busy ? 'stack is-busy' : 'stack'} aria-busy={busy || undefined}>
               {stale === true && <StaleNotice onRegenerate={generate} busy={busy} />}
 
               {fabrications.length > 0 ? (
@@ -327,14 +339,7 @@ export default function CoverLetter() {
                   <section className="card">
                     <h2>PDF</h2>
                     <PdfErrorBoundary>
-                      <Suspense
-                        fallback={
-                          <div className="preview-loading" role="status">
-                            <span>Preparing the PDF preview…</span>
-                            <span className="progress-bar" aria-hidden="true" />
-                          </div>
-                        }
-                      >
+                      <Suspense fallback={<PreviewSkeleton />}>
                         <PdfPreview kind="coverLetter" data={normalised} fileName={fileName} />
                       </Suspense>
                     </PdfErrorBoundary>
@@ -364,7 +369,7 @@ export default function CoverLetter() {
                   </section>
                 </>
               )}
-            </>
+            </div>
           )}
         </div>
 
@@ -444,6 +449,27 @@ function JobContext({ parsedJD, gap, score }) {
 }
 
 const asList = (v) => (Array.isArray(v) ? v : []);
+
+/** The shape of a letter on its paper, while the first one is being written. Decorative. */
+function LetterSkeleton() {
+  return (
+    <section className="card" aria-hidden="true">
+      <span className="skeleton" style={{ width: '20%', marginBottom: 'var(--space-5)' }} />
+      <div className="letter-sheet">
+        <div className="letter-skeleton">
+          <span className="skeleton skeleton--paper" />
+          <span className="skeleton skeleton--paper" />
+          <span className="skeleton skeleton--paper" />
+          <span className="skeleton skeleton--paper skeleton--short" />
+          <span className="skeleton skeleton--paper skeleton--gap" />
+          <span className="skeleton skeleton--paper" />
+          <span className="skeleton skeleton--paper skeleton--short" />
+          <span className="skeleton skeleton--paper skeleton--gap" style={{ width: '25%' }} />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 /**
  * The one editable surface: a plain-text textarea and an explicit Save.
@@ -564,7 +590,8 @@ function StaleNotice({ onRegenerate, busy }) {
         choice &mdash; and it will replace the letter below, including any edits you have made to it.
       </p>
       <p className="actions">
-        <button type="button" className="button button--primary" onClick={onRegenerate} disabled={busy}>
+        <button type="button" className="button button--primary" onClick={onRegenerate} disabled={busy} aria-busy={busy || undefined}>
+          {busy && <Spinner />}
           {busy ? 'Writing your letter...' : 'Write it again from the current resume'}
         </button>
         <span className="muted">Or keep this one and edit it by hand below.</span>

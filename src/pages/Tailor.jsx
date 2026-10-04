@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
@@ -8,6 +8,8 @@ import EmptyState from '../components/ui/EmptyState.jsx';
 import ErrorNotice from '../components/ui/ErrorNotice.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
 import ScoreRing from '../components/ui/ScoreRing.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
+import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { gradeTone } from '../components/ui/scoreBands.js';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
 import { compareScores, describeScoreChange } from '../services/currentResume.js';
@@ -154,13 +156,25 @@ export default function Tailor() {
                 This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
               </p>
             ) : (
-              <button type="button" className="button button--primary button--lg" onClick={run} disabled={busy}>
+              <button
+                type="button"
+                className="button button--primary button--lg"
+                onClick={run}
+                disabled={busy}
+                aria-busy={busy || undefined}
+              >
+                {busy && <Spinner />}
                 {busy ? 'Improving…' : 'Tailor my resume'}
                 {!busy && <Icon name="arrowRight" size={18} />}
               </button>
             )}
           </div>
-          {busy && <WorkingLine provider={provider} />}
+          {busy && (
+            <WorkingLine
+              label={`Improving relevant sections with ${PROVIDER_LABELS[provider] ?? provider}…`}
+              detail="This usually takes under a minute. Your original resume is not touched."
+            />
+          )}
           {error && (
             <div style={{ gridColumn: '1 / -1' }}>
               <ErrorNotice compact error={error} onRetry={hasKey ? run : undefined} />
@@ -168,6 +182,8 @@ export default function Tailor() {
           )}
         </section>
       )}
+
+      {!tailored && busy && <EditorSkeleton />}
 
       {tailored && (
         <div className="workspace workspace--aside">
@@ -190,6 +206,7 @@ export default function Tailor() {
                   </ScoreRing>
                   <div>
                     <span
+                      key={`${comparison.after.total}`}
                       className={`tailor-panel__points tailor-panel__points--${comparison.direction}`}
                       aria-label={describeScoreChange(comparison)}
                     >
@@ -290,24 +307,23 @@ export default function Tailor() {
   );
 }
 
-/** The one AI call on this page: an honest "still working" line with the time it has taken. */
-function WorkingLine({ provider }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const started = Date.now();
-    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, []);
+/**
+ * The shape of the tailored resume editor, shown while the pass runs, so the
+ * page already looks like what it is about to become. Decorative.
+ */
+function EditorSkeleton() {
   return (
-    <div className="loading-line" role="status">
-      <span className="loading-line__text">
-        <span>Improving relevant sections with {PROVIDER_LABELS[provider] ?? provider}… this usually takes under a minute.</span>
-        <span className="loading-line__elapsed" aria-hidden="true">
-          {elapsed}s
-        </span>
-      </span>
-      <span className="progress-bar" aria-hidden="true" />
-    </div>
+    <section className="card" aria-hidden="true">
+      <span className="skeleton skeleton--title" style={{ width: '30%', height: '1rem' }} />
+      {[0, 1, 2].map((block) => (
+        <div key={block} style={{ marginTop: 'var(--space-6)' }}>
+          <span className="skeleton" style={{ width: '22%' }} />
+          <span className="skeleton" />
+          <span className="skeleton" />
+          <span className="skeleton skeleton--short" />
+        </div>
+      ))}
+    </section>
   );
 }
 

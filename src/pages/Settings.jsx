@@ -5,6 +5,7 @@ import { PROVIDER_LABELS, testConnection } from '../services/aiService.js';
 import { describeAiFailure } from '../utils/errorMessages.js';
 import Icon from '../components/Icon.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
 
 /**
  * Settings -> API keys.
@@ -233,7 +234,7 @@ function ProviderRow({ provider, hasKey, onChanged }) {
   }, [label, provider, trimmed]);
 
   return (
-    <li className={`provider${hasKey ? ' provider--saved' : ''}`}>
+    <li className={`provider${hasKey ? ' provider--saved' : ''}`} aria-busy={testing || undefined}>
       <div className="provider__head">
         <span className="provider__mark" aria-hidden="true">
           {label.replace(/^Google\s+/, '').charAt(0)}
@@ -263,8 +264,15 @@ function ProviderRow({ provider, hasKey, onChanged }) {
         <button type="button" className={trimmed ? 'button button--primary' : 'button'} onClick={handleSave} disabled={!trimmed}>
           {hasKey && trimmed ? 'Replace' : 'Save'}
         </button>
-        <button type="button" className="button" onClick={handleTest} disabled={testing || (!trimmed && !hasKey)}>
-          {testing ? 'Testing...' : 'Test connection'}
+        <button
+          type="button"
+          className="button"
+          onClick={handleTest}
+          disabled={testing || (!trimmed && !hasKey)}
+          aria-busy={testing || undefined}
+        >
+          {testing && <Spinner />}
+          {testing ? 'Testing connection…' : 'Test connection'}
         </button>
         <button type="button" className="button button--ghost" onClick={handleClear} disabled={!hasKey}>
           Remove

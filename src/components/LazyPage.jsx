@@ -20,11 +20,19 @@ export default function LazyPage({ children }) {
     <LazyPageBoundary>
       <Suspense
         fallback={
-          <section className="page lazy-loading" aria-busy="true">
-            <div className="loading-line" role="status">
-              <span>Loading...</span>
-              <span className="progress-bar" aria-hidden="true" />
+          // The shape of a page, faded in after 150 ms so a fast chunk load
+          // never flashes it. "Loading..." stays as the accessible status.
+          <section className="page-skeleton" aria-busy="true">
+            <p className="visually-hidden" role="status">
+              Loading...
+            </p>
+            <div className="page-skeleton__head" aria-hidden="true">
+              <span className="skeleton skeleton--eyebrow" />
+              <span className="skeleton skeleton--title" />
+              <span className="skeleton skeleton--short" />
             </div>
+            <span className="skeleton skeleton--block" aria-hidden="true" />
+            <span className="skeleton skeleton--block" aria-hidden="true" />
           </section>
         }
       >

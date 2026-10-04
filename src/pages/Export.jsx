@@ -6,6 +6,7 @@ import Icon from '../components/Icon.jsx';
 import TemplatePicker from '../components/export/TemplatePicker.jsx';
 import EmptyState from '../components/ui/EmptyState.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
+import PreviewSkeleton from '../components/ui/PreviewSkeleton.jsx';
 import ScoreRing from '../components/ui/ScoreRing.jsx';
 import { gradeTone, gradeVerdict } from '../components/ui/scoreBands.js';
 import { resolveResumeTemplate, templateById } from '../components/export/resumeTemplates.js';
@@ -235,22 +236,13 @@ export default function Export() {
 
         <div>
           <PdfErrorBoundary>
-            <Suspense fallback={<PreviewLoading />}>
+            <Suspense fallback={<PreviewSkeleton />}>
               <PdfPreview resume={resume} template={template} accent={accent} font={font} fileName={fileName} />
             </Suspense>
           </PdfErrorBoundary>
         </div>
       </div>
     </section>
-  );
-}
-
-function PreviewLoading() {
-  return (
-    <div className="preview-loading" role="status">
-      <span>Preparing the PDF preview…</span>
-      <span className="progress-bar" aria-hidden="true" />
-    </div>
   );
 }
 

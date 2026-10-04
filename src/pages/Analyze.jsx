@@ -8,6 +8,8 @@ import EmptyState from '../components/ui/EmptyState.jsx';
 import ErrorNotice from '../components/ui/ErrorNotice.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
 import ScoreRing from '../components/ui/ScoreRing.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
+import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { band, gradeTone, gradeVerdict } from '../components/ui/scoreBands.js';
 import { CRITERION_LABELS } from '../services/atsScorer.js';
 import { compareScores, describeScoreChange, selectCurrentResume } from '../services/currentResume.js';
@@ -203,7 +205,7 @@ function ScoreHero({ atsScore, gap, parsedJD }) {
         <p className="eyebrow" id="score-title">
           ATS score{role ? ` · ${role}` : ''}
         </p>
-        <p className="score__total">
+        <p className="score__total" key={atsScore.total}>
           {atsScore.total} <span className="muted">/ {atsScore.scoreableMax}</span>
         </p>
         <p className={`score-hero__verdict score-hero__verdict--${atsScore.isFallback ? 'mid' : tone}`}>
@@ -586,15 +588,16 @@ function SkillInferenceGate() {
           ) : (
             <>
               <p className="actions">
-                <button type="button" className="button button--primary" onClick={run} disabled={busy}>
+                <button type="button" className="button button--primary" onClick={run} disabled={busy} aria-busy={busy || undefined}>
+                  {busy && <Spinner />}
                   {busy ? 'Reading your experience…' : 'Suggest skills from my experience'}
                 </button>
               </p>
               {busy && (
-                <div className="loading-line" role="status">
-                  <span>Reading your experience with {PROVIDER_LABELS[provider] ?? provider}…</span>
-                  <span className="progress-bar" aria-hidden="true" />
-                </div>
+                <WorkingLine
+                  label={`Reading your experience with ${PROVIDER_LABELS[provider] ?? provider}…`}
+                  detail="Each suggestion has to quote a line from your resume, or it is dropped."
+                />
               )}
             </>
           )}
@@ -612,10 +615,14 @@ function SkillInferenceGate() {
       {suggestions && suggestions.length > 0 && (
         <>
           <ul className="suggestions">
-            {suggestions.map((s) => {
+            {suggestions.map((s, i) => {
               const decision = decisions[s.skill];
               return (
-                <li key={s.skill} className={`suggestion${decision ? ` suggestion--${decision}` : ''}`}>
+                <li
+                  key={s.skill}
+                  className={`suggestion reveal${decision ? ` suggestion--${decision}` : ''}`}
+                  style={{ '--i': i }}
+                >
                   <div className="suggestion__head">
                     <span className="suggestion__skill">{s.skill}</span>
                     <span className={`badge badge--dot badge--${s.confidence}`}>{s.confidence} confidence</span>

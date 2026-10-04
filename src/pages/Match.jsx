@@ -22,6 +22,9 @@ import Icon from '../components/Icon.jsx';
 import ErrorNotice from '../components/ui/ErrorNotice.jsx';
 import PageHeader from '../components/ui/PageHeader.jsx';
 import ScoreRing from '../components/ui/ScoreRing.jsx';
+import FetchProgress from '../components/ui/FetchProgress.jsx';
+import Spinner from '../components/ui/Spinner.jsx';
+import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { gradeTone } from '../components/ui/scoreBands.js';
 
 /**
@@ -72,6 +75,7 @@ export default function Match() {
   const [runError, setRunError] = useState(null);
   const [urlBusy, setUrlBusy] = useState(false);
   const [urlNotice, setUrlNotice] = useState(null);
+  const [urlAttempts, setUrlAttempts] = useState([]); // readers tried so far, for FetchProgress
   const [url, setUrl] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [pasteLabel, setPasteLabel] = useState('');
@@ -116,9 +120,12 @@ export default function Match() {
   async function fetchUrl() {
     if (!url.trim()) return;
     setUrlBusy(true);
+    setUrlAttempts([]);
     setUrlNotice(null);
     try {
-      const result = await fetchJobDescriptionFromUrl(url);
+      const result = await fetchJobDescriptionFromUrl(url, {
+        onAttempt: (attempt) => setUrlAttempts((tried) => [...tried, attempt]),
+      });
       setPasteText(result.text);
       setUrlNotice({
         tone: 'ok',
@@ -318,10 +325,12 @@ export default function Match() {
                       }
                     }}
                   />
-                  <button type="button" onClick={fetchUrl} disabled={urlBusy || !url.trim()}>
+                  <button type="button" onClick={fetchUrl} disabled={urlBusy || !url.trim()} aria-busy={urlBusy || undefined}>
+                    {urlBusy && <Spinner />}
                     {urlBusy ? 'Fetching...' : 'Fetch'}
                   </button>
                 </div>
+                {urlBusy && <FetchProgress attempts={urlAttempts} />}
                 <p className="field-hint">
                   Fetching goes through public proxies and fails on some boards &mdash; LinkedIn, Indeed and Glassdoor
                   block it outright. Pasting the text always works.
@@ -415,7 +424,13 @@ export default function Match() {
                         </p>
                       </div>
                       <div className="match__posting-side">
-                        {status && <span className={`match__status match__status--${status}`}>{STATUS_LABEL[status]}</span>}
+                        {status && (
+                          <span className={`match__status match__status--${status}`}>
+                            {status === 'running' && <Spinner />}
+                            {status === 'done' && <Icon name="check" size={13} />}
+                            {STATUS_LABEL[status]}
+                          </span>
+                        )}
                         <button
                           type="button"
                           className="button button--sm button--danger"
@@ -476,13 +491,20 @@ export default function Match() {
                 ) : (
                   <>
                     <p className="actions">
-                      <button type="button" className="button button--primary button--block" onClick={run} disabled={running}>
+                      <button
+                        type="button"
+                        className="button button--primary button--block"
+                        onClick={run}
+                        disabled={running}
+                        aria-busy={running || undefined}
+                      >
+                        {running && <Spinner />}
                         {running
                           ? `Reading posting ${Math.min((progress?.index ?? 0) + 1, runnable.length)} of ${runnable.length}...`
                           : `Match ${runnable.length} posting${runnable.length === 1 ? '' : 's'}`}
                       </button>
                     </p>
-                    {running && <span className="progress-bar" aria-hidden="true" style={{ display: 'block', marginTop: 'var(--space-3)' }} />}
+                    {running && <BatchProgress progress={progress} postings={runnable} />}
                   </>
                 )}
               </>
@@ -493,6 +515,26 @@ export default function Match() {
         </aside>
       </div>
     </section>
+  );
+}
+
+/**
+ * The batch in flight, measured: postings finished out of the total, from
+ * runMatchBatch's onProgress, and the name of the one being read. Each posting
+ * is one AI call, so the bar moves in real steps rather than pretending.
+ */
+function BatchProgress({ progress, postings }) {
+  const total = progress?.total || postings.length || 1;
+  const index = progress?.index ?? 0;
+  const finished = index + (progress?.phase === 'done' || progress?.phase === 'failed' ? 1 : 0);
+  const at = postings.findIndex((p) => p.id === progress?.id);
+  const current = at === -1 ? null : describePosting(postings[at], null, at);
+  return (
+    <WorkingLine
+      label={current ? `Reading ${current}…` : 'Starting…'}
+      detail={`${finished} of ${total} scored`}
+      progress={finished / total}
+    />
   );
 }
 
@@ -642,7 +684,8 @@ function StaleBanner({ count, onRerun, running, canRun }) {
           currently possible. */}
       <p className="actions">
         {canRun && (
-          <button type="button" className="button button--primary" onClick={onRerun} disabled={running}>
+          <button type="button" className="button button--primary" onClick={onRerun} disabled={running} aria-busy={running || undefined}>
+            {running && <Spinner />}
             {running ? 'Re-running...' : 'Score them against the current resume'}
           </button>
         )}

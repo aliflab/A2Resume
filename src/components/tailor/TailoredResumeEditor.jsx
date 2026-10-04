@@ -1,6 +1,8 @@
 import { useEffect, useId, useState } from 'react';
 
 import { ACTIONS, useApp } from '../../context/AppContext.jsx';
+import Icon from '../Icon.jsx';
+import Spinner from '../ui/Spinner.jsx';
 import {
   certificationHeading,
   contactParts,
@@ -281,7 +283,7 @@ function EditableBlock({
   recovered,
   children,
 }) {
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
   // A recovered draft opens the block straight away: the content is the point,
   // and hiding it behind an Edit click would look like it had been lost.
   const [draft, setDraft] = useState(() => (recovered === undefined ? null : recovered));
@@ -316,10 +318,29 @@ function EditableBlock({
     close();
   };
 
+  // Autosave feedback, derived rather than tracked: nothing until the draft
+  // differs from what the block opened with, then "Saving draft…" until the
+  // debounced SET_DRAFT_EDIT has stored this exact value, then "Draft saved".
+  const draftState = (() => {
+    if (!editing) return null;
+    const json = JSON.stringify(draft);
+    if (json === JSON.stringify(makeDraft())) return null;
+    const stored = (Array.isArray(state.draftEdits) ? state.draftEdits : []).find(
+      (d) => d && d.section === section && (d.index ?? null) === (index ?? null)
+    );
+    return stored && JSON.stringify(stored.value) === json ? 'saved' : 'saving';
+  })();
+
   return (
     <div className={`edit-block${editing ? ' edit-block--editing' : ''}${variant === 'add' ? ' edit-block--add' : ''}`}>
       <div className="edit-block__head">
         <h3>{title}</h3>
+        {draftState && (
+          <span className={`draft-status draft-status--${draftState}`}>
+            {draftState === 'saving' ? <Spinner /> : <Icon name="check" size={13} />}
+            {draftState === 'saving' ? 'Saving draft…' : 'Draft saved'}
+          </span>
+        )}
         <div className="edit-block__actions">
           {!editing && (
             <button type="button" onClick={() => setDraft(makeDraft())} aria-label={editLabel}>

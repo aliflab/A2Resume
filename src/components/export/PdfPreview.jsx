@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 
 import Icon from '../Icon.jsx';
+import Spinner from '../ui/Spinner.jsx';
 import { resumeDocumentFor } from './resumeDocuments.js';
 import CoverLetterDocument from './CoverLetterDocument.jsx';
 import { resolveResumeTheme } from './resumeDesign.js';
@@ -49,14 +50,29 @@ export default function PdfPreview({ kind = 'resume', data, resume, template, ac
     [kind, payload, template, accent, font],
   );
 
+  // Whether the frame is still showing an older document than `doc`. A
+  // template, font or colour change builds a new document, and the frame
+  // keeps the old page until the new one has loaded; until then the canvas is
+  // dimmed with "Updating preview…". Cleared by the iframe's own load event,
+  // which fires when the new PDF is actually on screen -- so this measures
+  // what the user sees, and state is only ever set from that event handler.
+  // The handler closes over this render's `doc`; React attaches the latest
+  // render's handler, so a load always marks the newest document as shown.
+  const [shownDoc, setShownDoc] = useState(null);
+  const busy = shownDoc !== doc;
+
   return (
-    <div className="pdf-preview">
+    <div className={`pdf-preview${busy ? ' pdf-preview--busy' : ''}`} aria-busy={busy || undefined}>
       <div className="pdf-preview__toolbar">
         <PDFDownloadLink document={doc} fileName={fileName} className="button button--primary">
           {({ loading, error }) => {
             if (error) return 'Could not build the PDF';
+            // The text stays exactly "Preparing the PDF..." -- runners match it.
             return loading ? (
-              'Preparing the PDF...'
+              <>
+                <Spinner />
+                Preparing the PDF...
+              </>
             ) : (
               <>
                 <Icon name="download" size={16} />
@@ -72,7 +88,11 @@ export default function PdfPreview({ kind = 'resume', data, resume, template, ac
       </div>
 
       <div className="pdf-canvas">
-        <PDFViewer className="export__preview" showToolbar>
+        <span className="pdf-canvas__busy" role="status">
+          <Spinner />
+          {shownDoc === null ? 'Rendering preview…' : 'Updating preview…'}
+        </span>
+        <PDFViewer className="export__preview" showToolbar onLoad={() => setShownDoc(doc)}>
           {doc}
         </PDFViewer>
       </div>
