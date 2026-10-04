@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router';
 
+import Icon from './components/Icon.jsx';
 import { ACTIONS, useApp } from './context/AppContext.jsx';
 import {
   describeArtefactDrift,
@@ -9,17 +10,26 @@ import {
   subscribePersistence,
 } from './services/sessionPersistence.js';
 
-// The four wizard steps, then the side tools. Nothing here guards anything --
-// every page must survive being opened directly with empty state.
-const NAV = [
-  { to: '/input', label: '1. Input' },
-  { to: '/analyze', label: '2. Analyze' },
-  { to: '/tailor', label: '3. Tailor' },
-  { to: '/export', label: '4. Export' },
+// Three tiers, and the header draws them differently on purpose:
+// - STEPS, the wizard most visits walk through in order. Numbered, connected,
+//   and the most prominent thing in the header.
+// - TOOLS, side pages that work on the same resume but are not a step. Lighter
+//   weight, grouped under their own label.
+// - Settings, which configures the app rather than working on a resume. It
+//   sits at the far end with Start over, the other app-level control.
+// Nothing here guards anything -- every page must survive being opened
+// directly with empty state. The paths are the routes in router.jsx.
+const STEPS = [
+  { to: '/input', label: 'Input' },
+  { to: '/analyze', label: 'Analyze' },
+  { to: '/tailor', label: 'Tailor' },
+  { to: '/export', label: 'Export' },
+];
+
+const TOOLS = [
   { to: '/match', label: 'Match' },
   { to: '/cover-letter', label: 'Cover Letter' },
   { to: '/designer', label: 'Designer' },
-  { to: '/settings', label: 'Settings' },
 ];
 
 export default function App() {
@@ -34,22 +44,53 @@ export default function App() {
   return (
     <div className="shell">
       <header className="shell__header">
-        <NavLink to="/" className="shell__brand">
+        <NavLink to="/" className="shell__brand" end>
+          <span className="shell__logo">
+            <Icon name="logo" size={16} />
+          </span>
           A2Resume
         </NavLink>
-        <nav className="shell__nav">
-          {NAV.map(({ to, label }) => (
-            <NavLink key={to} to={to}>
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <SessionControls onReset={() => setResetCount((n) => n + 1)} />
+
+        <div className="shell__navs">
+          <nav className="steps-nav" aria-label="Resume steps">
+            <ol>
+              {STEPS.map(({ to, label }, i) => (
+                <li key={to}>
+                  <NavLink to={to} className="steps-nav__link">
+                    <span className="steps-nav__num" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <span className="visually-hidden">Step {i + 1}: </span>
+                    {label}
+                  </NavLink>
+                </li>
+              ))}
+            </ol>
+          </nav>
+
+          <nav className="tools-nav" aria-labelledby="tools-nav-label">
+            <span id="tools-nav-label" className="tools-nav__label">
+              Tools
+            </span>
+            {TOOLS.map(({ to, label }) => (
+              <NavLink key={to} to={to} className="tools-nav__link">
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+
+        <div className="shell__utility">
+          <NavLink to="/settings" className="shell__settings">
+            <Icon name="settings" size={16} />
+            Settings
+          </NavLink>
+          <SessionControls onReset={() => setResetCount((n) => n + 1)} />
+        </div>
       </header>
 
       <main className="shell__main">
-        {/* Inside a .page box: same column as the page below it, and the
-            --line / --accent tokens are scoped to .page. */}
+        {/* Inside a .page box, so it sits in the same column as the page below it. */}
         <div className="page">
           <SessionNotice />
         </div>
@@ -57,7 +98,17 @@ export default function App() {
       </main>
 
       <footer className="shell__footer">
-        <span>Runs entirely in your browser. Your data never leaves this device.</span>
+        <p className="shell__footer-note">
+          <Icon name="lock" size={14} />
+          {/* "Never leaves this device" was not true once an analysis runs:
+              the resume goes to the provider the user picked. Input says so,
+              and this line now agrees with it. */}
+          <span>
+            Runs entirely in your browser. Your data is stored only on this device, and is sent only to the AI
+            provider you choose.
+          </span>
+        </p>
+        <p className="shell__footer-meta">No account · No server · Your own API key</p>
       </footer>
     </div>
   );
