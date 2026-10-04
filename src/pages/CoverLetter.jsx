@@ -25,6 +25,12 @@ import {
 } from '../services/coverLetterExport.js';
 import { findUnsupportedPdfCharacters } from '../services/resumeExport.js';
 import { describeGroundingWarning, fabricationWarnings } from '../utils/coverLetterGrounding.js';
+import Icon from '../components/Icon.jsx';
+import EmptyState from '../components/ui/EmptyState.jsx';
+import ErrorNotice from '../components/ui/ErrorNotice.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
+import ScoreRing from '../components/ui/ScoreRing.jsx';
+import { gradeTone, gradeVerdict } from '../components/ui/scoreBands.js';
 
 /**
  * Cover letter drafting.
@@ -135,215 +141,309 @@ export default function CoverLetter() {
     }
   }
 
-  if (!resume || !parsedJD) return <EmptyState />;
+  if (!resume || !parsedJD) {
+    return (
+      <EmptyState icon="mail" title="Nothing to write from yet" action={{ to: '/input', label: 'Add your resume' }}>
+        A cover letter is written from your resume and the job posting, and checked against your resume afterwards.
+        Add both on step 1 and run the analysis first, then come back here.
+      </EmptyState>
+    );
+  }
 
   return (
-    <section className="page cover-letter">
-      <header className="cover-letter__head">
-        <h1>Cover letter</h1>
-        <p className="muted">
-          Written from your resume and this posting. It can only name employers, skills and achievements your resume
-          actually contains &mdash; it is not allowed to invent one, and what it writes is checked against your resume
-          afterwards.
-        </p>
-      </header>
+    <section className="page page--wide cover-letter">
+      <PageHeader eyebrow="Tools · Cover Letter" title="Cover letter">
+        Written from your resume and this posting. It can only name employers, skills and achievements your resume
+        actually contains &mdash; it is not allowed to invent one, and what it writes is checked against your resume
+        afterwards.
+      </PageHeader>
 
-      <div className={`notice ${source === 'tailored' ? 'notice--ok' : 'notice--info'}`} role="status">
-        <p>
-          {source === 'tailored' ? (
-            'Writing from your tailored resume from step 3.'
-          ) : (
-            <>
-              Writing from your resume as it was read in step 1. You haven&apos;t run the tailoring pass.{' '}
-              <Link to="/tailor">Tailor it first</Link> for a letter that matches what you will send.
-            </>
-          )}
-        </p>
-      </div>
-
-      <section className="card">
-        <h2>{letter ? 'Write it again' : 'Write the letter'}</h2>
-
-        <fieldset className="cover-letter__options" disabled={busy}>
-          <legend className="field-label">Tone</legend>
-          {TONES.map((t) => (
-            <label key={t.id} className="cover-letter__option">
-              <input
-                type="radio"
-                name="cover-letter-tone"
-                value={t.id}
-                checked={tone === t.id}
-                onChange={() => setTone(t.id)}
-              />
-              <span>
-                <strong>{t.label}</strong> <span className="muted">{t.hint}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-
-        <fieldset className="cover-letter__options" disabled={busy}>
-          <legend className="field-label">Length</legend>
-          {LENGTHS.map((l) => (
-            <label key={l.id} className="cover-letter__option">
-              <input
-                type="radio"
-                name="cover-letter-length"
-                value={l.id}
-                checked={length === l.id}
-                onChange={() => setLength(l.id)}
-              />
-              <span>
-                <strong>{l.label}</strong> <span className="muted">{l.hint}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-
-        {!provider || !hasKey ? (
-          <p className="inline-status inline-status--error">
-            This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
-          </p>
+      <p className={`context-line${source === 'tailored' ? ' context-line--ok' : ''}`} role="status">
+        <Icon name={source === 'tailored' ? 'checkCircle' : 'info'} size={16} />
+        {source === 'tailored' ? (
+          'Writing from your tailored resume from step 3.'
         ) : (
-          <p className="actions">
-            <button type="button" className="button button--primary" onClick={generate} disabled={busy}>
-              {busy ? 'Writing your letter...' : letter ? 'Write a new letter' : 'Write my cover letter'}
-            </button>
-            {letter && <span className="muted">This replaces the letter below, including any edits you made.</span>}
-          </p>
+          <span>
+            Writing from your resume as it was read in step 1. You haven&apos;t run the tailoring pass.{' '}
+            <Link to="/tailor">Tailor it first</Link> for a letter that matches what you will send.
+          </span>
         )}
+      </p>
 
-        {error && (
-          <p className="inline-status inline-status--error" role="alert">
-            {error.message} {error.isAuth && <Link to="/settings">Open Settings</Link>}
-          </p>
-        )}
-      </section>
+      <div className="workspace workspace--aside">
+        <div className="stack">
+          <section className="card">
+            <h2>{letter ? 'Write it again' : 'Write the letter'}</h2>
+            <p className="muted">Choose a tone and a length. You can edit every word afterwards.</p>
 
-      {letter && (
-        <>
-          {stale === true && <StaleNotice onRegenerate={generate} busy={busy} />}
-
-          {fabrications.length > 0 ? (
-            <div className="notice notice--warn cover-letter__grounding" role="alert">
-              <p>
-                <strong>
-                  {fabrications.length === 1
-                    ? 'One thing in this letter is not in your resume.'
-                    : `${fabrications.length} things in this letter are not in your resume.`}
-                </strong>{' '}
-                Check each one before you send it. These may be invented.
-              </p>
-              <ul>
-                {fabrications.map((w) => (
-                  <li key={`${w.kind}:${w.term}`}>{describeGroundingWarning(w)}</li>
+            <fieldset className="cover-letter__options" disabled={busy}>
+              <legend className="field-label">Tone</legend>
+              <div className="option-grid">
+                {TONES.map((t) => (
+                  <label key={t.id} className="cover-letter__option">
+                    <input
+                      type="radio"
+                      name="cover-letter-tone"
+                      value={t.id}
+                      checked={tone === t.id}
+                      onChange={() => setTone(t.id)}
+                    />
+                    <strong>{t.label}</strong>
+                    <span className="muted">{t.hint}</span>
+                  </label>
                 ))}
-              </ul>
-              <p className="muted">
-                This check looks at named things and known tool names. It cannot catch an invented number or a
-                fabricated claim written in ordinary words, so read the letter as well.
-              </p>
-            </div>
-          ) : (
-            letter.grounding?.checkable === true && (
-              <div className="notice notice--ok cover-letter__grounding" role="status">
-                <p>
-                  <strong>Nothing unsupported found.</strong> Every company and tool the letter names appears in your
-                  resume ({letter.grounding.checkedNames} named{' '}
-                  {letter.grounding.checkedNames === 1 ? 'thing' : 'things'}, {letter.grounding.checkedSkills}{' '}
-                  {letter.grounding.checkedSkills === 1 ? 'tool' : 'tools'} checked).
-                </p>
-                <p className="muted">
-                  That is a term check, not a fact check. It cannot see an invented number, a claim written in
-                  ordinary words, or a true tool used to describe work you did not do. Read it before you send it.
-                </p>
               </div>
-            )
-          )}
+            </fieldset>
 
-          {styleWarnings.length > 0 && (
-            <div className="notice notice--info cover-letter__grounding" role="status">
-              <p>
-                <strong>The letter uses some of the posting&apos;s own language.</strong> These say nothing about you
-                and are worth replacing with something specific:
-              </p>
-              <ul>
-                {styleWarnings.map((w) => (
-                  <li key={`${w.kind}:${w.term}`}>{describeGroundingWarning(w)}</li>
+            <fieldset className="cover-letter__options" disabled={busy}>
+              <legend className="field-label">Length</legend>
+              <div className="option-grid">
+                {LENGTHS.map((l) => (
+                  <label key={l.id} className="cover-letter__option">
+                    <input
+                      type="radio"
+                      name="cover-letter-length"
+                      value={l.id}
+                      checked={length === l.id}
+                      onChange={() => setLength(l.id)}
+                    />
+                    <strong>{l.label}</strong>
+                    <span className="muted">{l.hint}</span>
+                  </label>
                 ))}
-              </ul>
-            </div>
-          )}
+              </div>
+            </fieldset>
 
-          {letter.lengthCheck && !letter.lengthCheck.ok && !letter.edited && (
-            <div className="notice notice--info" role="status">
-              <p>
-                You asked for <strong>{getLength(letter.length).label.toLowerCase()}</strong> (
-                {getLength(letter.length).paragraphs} paragraphs, {getLength(letter.length).minWords}&ndash;
-                {getLength(letter.length).maxWords} words) and got {letter.lengthCheck.paragraphs}{' '}
-                {letter.lengthCheck.paragraphs === 1 ? 'paragraph' : 'paragraphs'} and {letter.lengthCheck.words}{' '}
-                words. Edit it below, or write it again.
+            {!provider || !hasKey ? (
+              <p className="inline-status inline-status--error">
+                This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
               </p>
-            </div>
-          )}
-
-          {/* Keyed on the generation, not synced by an effect. See the note at
-              the top of this file. A Save keeps generatedAt, so it does not
-              remount and does not move the cursor. */}
-          <LetterEditor key={letter.generatedAt ?? 'letter'} letter={letter} resume={resume} parsedJD={parsedJD} />
-
-          {unsupportedChars.length > 0 && (
-            <div className="notice notice--warn" role="status">
-              <p>
-                <strong>Some characters can&apos;t be shown in the PDF: </strong>
-                {unsupportedChars.map((char) => `"${char}"`).join(' ')}
+            ) : (
+              <p className="actions">
+                <button type="button" className="button button--primary button--lg" onClick={generate} disabled={busy}>
+                  {busy ? 'Writing your letter...' : letter ? 'Write a new letter' : 'Write my cover letter'}
+                </button>
+                {letter && <span className="muted">This replaces the letter below, including any edits you made.</span>}
               </p>
-              <p>
-                The PDF uses a standard built-in font that only covers Western European characters, so these may come
-                out wrong or missing. Check the preview. The plain-text copy below is not affected.
-              </p>
-            </div>
-          )}
+            )}
 
-          {hasExportableLetter(normalised) && (
+            {busy && (
+              <div className="loading-line" role="status">
+                <span>Writing from your resume with {PROVIDER_LABELS[provider] ?? provider}…</span>
+                <span className="progress-bar" aria-hidden="true" />
+              </div>
+            )}
+
+            {error && <ErrorNotice compact error={error} onRetry={hasKey ? generate : undefined} />}
+          </section>
+
+          {letter && (
             <>
-              <section className="card">
-                <h2>PDF</h2>
-                <PdfErrorBoundary>
-                  <Suspense fallback={<p className="muted">Loading the PDF preview...</p>}>
-                    <PdfPreview kind="coverLetter" data={normalised} fileName={fileName} />
-                  </Suspense>
-                </PdfErrorBoundary>
-              </section>
+              {stale === true && <StaleNotice onRegenerate={generate} busy={busy} />}
 
-              <section className="card">
-                <h2>Plain text</h2>
-                <p className="muted">For an application form or an email body with no file upload.</p>
-                <p className="actions">
-                  <button type="button" className="button" onClick={copy}>
-                    Copy as plain text
-                  </button>
-                </p>
-                {copyStatus && (
-                  <p
-                    className={`inline-status ${copyStatus.ok ? 'inline-status--ok' : 'inline-status--error'}`}
-                    role="status"
-                  >
-                    {copyStatus.message}
+              {fabrications.length > 0 ? (
+                <div className="notice notice--warn cover-letter__grounding" role="alert">
+                  <p>
+                    <strong>
+                      {fabrications.length === 1
+                        ? 'One thing in this letter is not in your resume.'
+                        : `${fabrications.length} things in this letter are not in your resume.`}
+                    </strong>{' '}
+                    Check each one before you send it. These may be invented.
                   </p>
-                )}
-                <label className="field-label" htmlFor="cover-letter-plain-text">
-                  Text that will be copied
-                </label>
-                <textarea id="cover-letter-plain-text" readOnly rows={18} value={plainText} />
-              </section>
+                  <ul>
+                    {fabrications.map((w) => (
+                      <li key={`${w.kind}:${w.term}`}>{describeGroundingWarning(w)}</li>
+                    ))}
+                  </ul>
+                  <p className="muted">
+                    This check looks at named things and known tool names. It cannot catch an invented number or a
+                    fabricated claim written in ordinary words, so read the letter as well.
+                  </p>
+                </div>
+              ) : (
+                letter.grounding?.checkable === true && (
+                  <div className="notice notice--ok cover-letter__grounding" role="status">
+                    <p>
+                      <strong>Nothing unsupported found.</strong> Every company and tool the letter names appears in
+                      your resume ({letter.grounding.checkedNames} named{' '}
+                      {letter.grounding.checkedNames === 1 ? 'thing' : 'things'}, {letter.grounding.checkedSkills}{' '}
+                      {letter.grounding.checkedSkills === 1 ? 'tool' : 'tools'} checked).
+                    </p>
+                    <p className="muted">
+                      That is a term check, not a fact check. It cannot see an invented number, a claim written in
+                      ordinary words, or a true tool used to describe work you did not do. Read it before you send it.
+                    </p>
+                  </div>
+                )
+              )}
+
+              {styleWarnings.length > 0 && (
+                <div className="notice notice--info cover-letter__grounding" role="status">
+                  <p>
+                    <strong>The letter uses some of the posting&apos;s own language.</strong> These say nothing about
+                    you and are worth replacing with something specific:
+                  </p>
+                  <ul>
+                    {styleWarnings.map((w) => (
+                      <li key={`${w.kind}:${w.term}`}>{describeGroundingWarning(w)}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {letter.lengthCheck && !letter.lengthCheck.ok && !letter.edited && (
+                <div className="notice notice--info" role="status">
+                  <p>
+                    You asked for <strong>{getLength(letter.length).label.toLowerCase()}</strong> (
+                    {getLength(letter.length).paragraphs} paragraphs, {getLength(letter.length).minWords}&ndash;
+                    {getLength(letter.length).maxWords} words) and got {letter.lengthCheck.paragraphs}{' '}
+                    {letter.lengthCheck.paragraphs === 1 ? 'paragraph' : 'paragraphs'} and {letter.lengthCheck.words}{' '}
+                    words. Edit it below, or write it again.
+                  </p>
+                </div>
+              )}
+
+              {/* Keyed on the generation, not synced by an effect. See the note at
+                  the top of this file. A Save keeps generatedAt, so it does not
+                  remount and does not move the cursor. */}
+              <LetterEditor key={letter.generatedAt ?? 'letter'} letter={letter} resume={resume} parsedJD={parsedJD} />
+
+              {unsupportedChars.length > 0 && (
+                <div className="notice notice--warn" role="status">
+                  <p>
+                    <strong>Some characters can&apos;t be shown in the PDF: </strong>
+                    {unsupportedChars.map((char) => `"${char}"`).join(' ')}
+                  </p>
+                  <p>
+                    The PDF uses a standard built-in font that only covers Western European characters, so these may
+                    come out wrong or missing. Check the preview. The plain-text copy below is not affected.
+                  </p>
+                </div>
+              )}
+
+              {hasExportableLetter(normalised) && (
+                <>
+                  <section className="card">
+                    <h2>PDF</h2>
+                    <PdfErrorBoundary>
+                      <Suspense
+                        fallback={
+                          <div className="preview-loading" role="status">
+                            <span>Preparing the PDF preview…</span>
+                            <span className="progress-bar" aria-hidden="true" />
+                          </div>
+                        }
+                      >
+                        <PdfPreview kind="coverLetter" data={normalised} fileName={fileName} />
+                      </Suspense>
+                    </PdfErrorBoundary>
+                  </section>
+
+                  <section className="card">
+                    <h2>Plain text</h2>
+                    <p className="muted">For an application form or an email body with no file upload.</p>
+                    <p className="actions">
+                      <button type="button" className="button" onClick={copy}>
+                        <Icon name="copy" size={15} />
+                        Copy as plain text
+                      </button>
+                    </p>
+                    {copyStatus && (
+                      <p
+                        className={`inline-status ${copyStatus.ok ? 'inline-status--ok' : 'inline-status--error'}`}
+                        role="status"
+                      >
+                        {copyStatus.message}
+                      </p>
+                    )}
+                    <label className="field-label" htmlFor="cover-letter-plain-text">
+                      Text that will be copied
+                    </label>
+                    <textarea id="cover-letter-plain-text" readOnly rows={12} value={plainText} />
+                  </section>
+                </>
+              )}
             </>
           )}
-        </>
-      )}
+        </div>
+
+        <aside className="aside" aria-label="About this job">
+          <JobContext parsedJD={parsedJD} gap={state.gapAnalysis ?? state.atsScore?.gapAnalysis ?? null} score={state.atsScore} />
+        </aside>
+      </div>
     </section>
   );
 }
+
+/**
+ * What the letter is being written for, beside the letter. Everything here is
+ * read from the parsed posting and the existing analysis -- no extra call.
+ */
+function JobContext({ parsedJD, gap, score }) {
+  const requirements = (Array.isArray(parsedJD?.requiredSkills) ? parsedJD.requiredSkills : []).slice(0, 5);
+  const keywords = [
+    ...asList(gap?.matched).map((k) => ({ ...k, tone: 'success', state: 'in your resume' })),
+    ...asList(gap?.partial).map((k) => ({ ...k, tone: 'warning', state: 'partly in your resume' })),
+    ...asList(gap?.missing).map((k) => ({ ...k, tone: 'danger', state: 'not in your resume' })),
+  ]
+    .filter((k) => k.priority === 'high')
+    .slice(0, 10);
+
+  return (
+    <section className="card context-panel">
+      <dl>
+        <div>
+          <dt>Role</dt>
+          <dd>
+            <strong>{parsedJD?.jobTitle || 'Untitled role'}</strong>
+            {parsedJD?.company ? ` · ${parsedJD.company}` : ''}
+          </dd>
+        </div>
+        {score && (
+          <div>
+            <dt>Your match</dt>
+            <dd style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+              <ScoreRing percentage={score.percentage} size={40} tone={gradeTone(score)}>
+                <strong style={{ fontSize: 'var(--text-xs)' }}>{score.grade}</strong>
+              </ScoreRing>
+              <span>
+                {score.percentage}% &middot; {gradeVerdict(score)}
+              </span>
+            </dd>
+          </div>
+        )}
+        {requirements.length > 0 && (
+          <div>
+            <dt>Key requirements</dt>
+            <dd>
+              <ul style={{ margin: 0, paddingLeft: 'var(--space-5)' }}>
+                {requirements.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        )}
+        {keywords.length > 0 && (
+          <div>
+            <dt>High-priority keywords</dt>
+            <dd className="pills" style={{ marginTop: 'var(--space-2)' }}>
+              {keywords.map((k) => (
+                <span key={k.keyword} className={`pill pill--${k.tone}`} title={`${k.keyword}: ${k.state}`}>
+                  {k.keyword}
+                  <span className="visually-hidden"> ({k.state})</span>
+                </span>
+              ))}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  );
+}
+
+const asList = (v) => (Array.isArray(v) ? v : []);
 
 /**
  * The one editable surface: a plain-text textarea and an explicit Save.
@@ -380,25 +480,32 @@ function LetterEditor({ letter, resume, parsedJD }) {
 
   return (
     <section className="card">
-      <h2>The letter</h2>
-      <p className="muted">
-        Edit it freely. {getTone(letter.tone).label} tone, {getLength(letter.length).label.toLowerCase()}
-        {letter.edited ? ', edited by you' : ''}
-        {letter.provider ? `, written by ${PROVIDER_LABELS[letter.provider] ?? letter.provider}` : ''}. Your name,
-        contact details and the date are added around this text when it is exported, so they are not in the box.
-      </p>
-      <label className="field-label" htmlFor="cover-letter-body">
+      <div className="section-head">
+        <div>
+          <h2>The letter</h2>
+          <p className="muted">
+            {getTone(letter.tone).label} tone, {getLength(letter.length).label.toLowerCase()}
+            {letter.edited ? ', edited by you' : ''}
+            {letter.provider ? `, written by ${PROVIDER_LABELS[letter.provider] ?? letter.provider}` : ''}. It is
+            yours to edit. Your name, contact details and the date are added around this text when it is exported.
+          </p>
+        </div>
+        {letter.edited && <span className="badge badge--info">Edited</span>}
+      </div>
+      <label className="visually-hidden" htmlFor="cover-letter-body">
         Letter text
       </label>
-      <textarea
-        id="cover-letter-body"
-        rows={20}
-        value={draft}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          setSaved(false);
-        }}
-      />
+      <div className="letter-sheet">
+        <textarea
+          id="cover-letter-body"
+          rows={20}
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setSaved(false);
+          }}
+        />
+      </div>
       <p className="actions">
         <button type="button" className="button button--primary" onClick={save} disabled={!dirty}>
           Save changes
@@ -463,23 +570,6 @@ function StaleNotice({ onRegenerate, busy }) {
         <span className="muted">Or keep this one and edit it by hand below.</span>
       </p>
     </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <section className="page cover-letter">
-      <h1>Nothing to write from yet</h1>
-      <p className="muted">
-        A cover letter is written from your resume and the job posting. Upload or paste both on step 1 and run the
-        analysis first &mdash; then come back here.
-      </p>
-      <p>
-        <Link to="/input" className="button button--primary">
-          Go to step 1
-        </Link>
-      </p>
-    </section>
   );
 }
 

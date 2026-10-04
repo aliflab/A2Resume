@@ -3,6 +3,8 @@ import { useCallback, useState } from 'react';
 import { PROVIDER_IDS, getApiKey, getKeyPresence, setApiKey, clearApiKey } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS, testConnection } from '../services/aiService.js';
 import { describeAiFailure } from '../utils/errorMessages.js';
+import Icon from '../components/Icon.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
 
 /**
  * Settings -> API keys.
@@ -36,36 +38,60 @@ const MASK = '••••••••••••••••••••';
 
 export default function Settings() {
   return (
-    <section className="page settings">
-      <header className="settings__head">
-        <h1>Settings</h1>
-      </header>
+    <section className="page page--narrow settings">
+      <PageHeader eyebrow="Settings" title="Settings">
+        Your AI provider keys, and what this browser keeps. A2Resume has no accounts, no server and no database, so
+        everything here lives on this device only.
+      </PageHeader>
       <ApiKeysSection />
       <SessionDataSection />
     </section>
   );
 }
 
-/** Plain statement of where resume content lives. Same register as the key note. */
+/** Plain statement of where resume content lives. Kept in sync with PERSISTED_FIELD_NAMES and resetSession. */
 function SessionDataSection() {
   return (
-    <section className="card settings__section">
-      <h2>Your resume and job description</h2>
-
-      <div className="notice notice--info byok">
-        <p>
-          <strong>Your resume and the job description are saved only in this browser, on this device.</strong>{' '}
-          So is everything made from them: the analysis, the score, and the tailored resume. That is what lets a
-          reload pick up where you left off.
-        </p>
-        <p>
-          They stay there until you press <strong>Start over</strong> in the header, which deletes them. Clearing
-          your browser data deletes them too. Start over does not remove your API keys.
-        </p>
-        <p>
-          Until then, anyone who can use this browser profile can open them.
-        </p>
+    <section className="card settings__section" aria-labelledby="your-data-title">
+      <div className="section-head">
+        <div className="section-head__title">
+          <span className="section-head__icon">
+            <Icon name="database" size={18} />
+          </span>
+          <div>
+            <h2 id="your-data-title">Your data</h2>
+            <p className="muted">Your resume and the job description are saved only in this browser, on this device.</p>
+          </div>
+        </div>
       </div>
+
+      <ul className="byok-points">
+        <li>
+          <Icon name="file" size={16} />
+          <span>
+            <strong>Your resume and the job description</strong> are stored locally, so a reload picks up where you
+            left off.
+          </span>
+        </li>
+        <li>
+          <Icon name="layers" size={16} />
+          <span>
+            <strong>Everything made from them</strong> &mdash; the analysis, the score, the tailored resume, cover
+            letters and job matches &mdash; is stored locally too.
+          </span>
+        </li>
+        <li>
+          <Icon name="refresh" size={16} />
+          <span>
+            <strong>Start over</strong>, in the header, deletes all of it. Clearing your browser data deletes it too.
+            Start over does not remove your API keys.
+          </span>
+        </li>
+        <li>
+          <Icon name="lock" size={16} />
+          <span>Until then, anyone who can use this browser profile can open them.</span>
+        </li>
+      </ul>
     </section>
   );
 }
@@ -74,28 +100,50 @@ function ApiKeysSection() {
   // Booleans only. Never key values.
   const [presence, setPresence] = useState(() => safeKeyPresence());
   const refreshPresence = useCallback(() => setPresence(safeKeyPresence()), []);
+  const configured = PROVIDER_IDS.filter((id) => presence[id]).length;
 
   return (
-    <section className="card settings__section">
-      <h2>API keys</h2>
-
-      <div className="notice notice--info byok">
-        <p>
-          <strong>A2Resume has no accounts, no server, and no database.</strong> There is nothing to sign up
-          for, because there is nothing on the other end to sign up to.
-        </p>
-        <p>
-          Instead you bring your own key from an AI provider. That key is saved{' '}
-          <strong>only in this browser, on this device</strong>. When you run an analysis, your resume goes
-          directly from your browser to the provider you picked, using your key. It does not pass through a
-          server belonging to this app, because there isn&apos;t one.
-        </p>
-        <p>
-          The practical consequences: clearing your browser data deletes your keys, they do not follow you to
-          another device, and anyone who can use this browser profile can use your keys. Charges for what you
-          run appear on your own account with that provider.
-        </p>
+    <section className="card settings__section" aria-labelledby="providers-title">
+      <div className="section-head">
+        <div className="section-head__title">
+          <span className="section-head__icon">
+            <Icon name="key" size={18} />
+          </span>
+          <div>
+            <h2 id="providers-title">AI providers</h2>
+            <p className="muted">
+              {configured === 0
+                ? 'Add a key for at least one provider to run an analysis.'
+                : `${configured} of ${PROVIDER_IDS.length} configured.`}
+            </p>
+          </div>
+        </div>
       </div>
+
+      <ul className="byok-points">
+        <li>
+          <Icon name="key" size={16} />
+          <span>
+            <strong>Bring your own key.</strong> It is saved only in this browser, on this device, and is never shown
+            again once saved &mdash; not even its length.
+          </span>
+        </li>
+        <li>
+          <Icon name="shield" size={16} />
+          <span>
+            When you run an analysis, your resume goes <strong>directly from your browser to the provider you
+            picked</strong>, using your key. It does not pass through a server belonging to this app, because there
+            isn&apos;t one.
+          </span>
+        </li>
+        <li>
+          <Icon name="info" size={16} />
+          <span>
+            Clearing your browser data deletes your keys, they do not follow you to another device, and anyone who can
+            use this browser profile can use them. Charges appear on your own account with that provider.
+          </span>
+        </li>
+      </ul>
 
       <ol className="providers">
         {PROVIDER_IDS.map((id) => (
@@ -110,7 +158,7 @@ function ProviderRow({ provider, hasKey, onChanged }) {
   /** What the user is typing right now. Never seeded from storage. */
   const [draft, setDraft] = useState('');
   const [saveState, setSaveState] = useState(null); // { tone, message }
-  const [testState, setTestState] = useState(null); // { tone, message, hint, model }
+  const [testState, setTestState] = useState(null); // { tone, message, hint }
   const [testing, setTesting] = useState(false);
 
   const label = PROVIDER_LABELS[provider] ?? provider;
@@ -161,10 +209,9 @@ function ProviderRow({ provider, hasKey, onChanged }) {
       const result = await testConnection({ provider, apiKey: key });
 
       if (result.success) {
-        setTestState({
-          tone: 'ok',
-          message: `Working. ${label} answered using ${result.model}.`,
-        });
+        // The model id is deliberately not shown: it is an internal detail of
+        // the fallback list, and it changes as providers retire models.
+        setTestState({ tone: 'ok', message: `Connection successful. ${label} accepted this key.` });
       } else {
         const described = describeAiFailure({ code: result.code, message: result.error, provider });
         setTestState({
@@ -186,12 +233,17 @@ function ProviderRow({ provider, hasKey, onChanged }) {
   }, [label, provider, trimmed]);
 
   return (
-    <li className="provider">
+    <li className={`provider${hasKey ? ' provider--saved' : ''}`}>
       <div className="provider__head">
+        <span className="provider__mark" aria-hidden="true">
+          {label.replace(/^Google\s+/, '').charAt(0)}
+        </span>
         <label htmlFor={inputId} className="provider__name">
           {label}
         </label>
-        <span className={hasKey ? 'badge badge--on' : 'badge'}>{hasKey ? 'Saved' : 'Not set'}</span>
+        <span className={hasKey ? 'badge badge--dot badge--on' : 'badge badge--dot'}>
+          {hasKey ? 'Configured' : 'Not configured'}
+        </span>
       </div>
 
       <div className="row">
@@ -208,14 +260,14 @@ function ProviderRow({ provider, hasKey, onChanged }) {
           spellCheck={false}
           aria-describedby={`status-${provider}`}
         />
-        <button type="button" onClick={handleSave} disabled={!trimmed}>
+        <button type="button" className={trimmed ? 'button button--primary' : 'button'} onClick={handleSave} disabled={!trimmed}>
           {hasKey && trimmed ? 'Replace' : 'Save'}
         </button>
-        <button type="button" onClick={handleTest} disabled={testing || (!trimmed && !hasKey)}>
-          {testing ? 'Testing...' : 'Test'}
+        <button type="button" className="button" onClick={handleTest} disabled={testing || (!trimmed && !hasKey)}>
+          {testing ? 'Testing...' : 'Test connection'}
         </button>
-        <button type="button" onClick={handleClear} disabled={!hasKey}>
-          Clear
+        <button type="button" className="button button--ghost" onClick={handleClear} disabled={!hasKey}>
+          Remove
         </button>
       </div>
 
@@ -228,8 +280,10 @@ function ProviderRow({ provider, hasKey, onChanged }) {
         {saveState && <p className={`inline-status inline-status--${saveState.tone}`}>{saveState.message}</p>}
         {testState && (
           <p className={`inline-status inline-status--${testState.tone}`}>
-            {testState.message}
-            {testState.hint && <span className="muted"> {testState.hint}</span>}
+            <span>
+              {testState.message}
+              {testState.hint && <span className="muted"> {testState.hint}</span>}
+            </span>
           </p>
         )}
       </div>

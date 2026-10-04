@@ -2,10 +2,15 @@ import { Component, Suspense, lazy, useCallback, useMemo } from 'react';
 import { Link } from 'react-router';
 
 import { ACTIONS, useApp } from '../context/AppContext.jsx';
+import Icon from '../components/Icon.jsx';
+import TemplatePicker from '../components/export/TemplatePicker.jsx';
+import EmptyState from '../components/ui/EmptyState.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
 import { resolveResumeTemplate, templateById } from '../components/export/resumeTemplates.js';
 import {
   ACCENT_CHOICES,
   FONT_CHOICES,
+  accentById,
   fontById,
   resolveAccentChoice,
   resolveFontChoice,
@@ -19,26 +24,22 @@ import {
 } from '../services/resumeExport.js';
 
 /**
- * Designer: accent colour and font, on top of the template picked on Export.
+ * Designer: template, accent colour and font, with the live PDF beside them.
  *
  * WHAT IT DOES NOT DO
  * Layout, spacing, margins, sizes and section order stay the template's. There
  * is no picker for any of them, and the templates only accept a font family
  * and an accent colour (buildStyles in each template). The choices are
  * curated lists (resumeDesign.js): built-in PDF fonts only, and swatches that
- * all clear 7:1 contrast on white.
+ * all clear 7:1 contrast on white. There is deliberately no free colour picker.
  *
- * PERSISTENCE: `settings.resumeAccent` and `settings.resumeFont`, next to
- * `settings.resumeTemplate`, for the same reason -- a standing preference about
- * how the user's resume looks, not an artefact of one run. So a new Input run
- * keeps them and Start over resets them. Stored as ids (or null = "the
- * template's own"), never as hex or face names, and resolved on read, so a
- * junk value from storage renders the template's defaults.
- *
- * The choice applies to whichever template is picked, not to one template:
- * switching template on Export keeps the colour and font. That is one setting
- * per concern rather than a grid of per-template overrides, and the note under
- * the swatches says where the accent will land in the current template.
+ * PERSISTENCE: `settings.resumeAccent`, `settings.resumeFont` and
+ * `settings.resumeTemplate` -- standing preferences about how the user's
+ * resume looks, not artefacts of one run. So a new Input run keeps them and
+ * Start over resets them. Stored as ids (or null = "the template's own"),
+ * never as hex or face names, and resolved on read, so a junk value from
+ * storage renders the template's defaults. The template picker here writes the
+ * same setting as Export's, so the two pages always agree.
  *
  * Same empty state as Export, and the same lazy PdfPreview: the preview and
  * the download on this page are the file Export would produce.
@@ -66,66 +67,38 @@ export default function Designer() {
 
   const choose = useCallback((payload) => dispatch({ type: ACTIONS.SET_SETTINGS, payload }), [dispatch]);
 
-  if (!raw || !hasExportableContent(resume)) return <EmptyState />;
+  if (!raw || !hasExportableContent(resume)) {
+    return (
+      <EmptyState
+        icon="palette"
+        title="Nothing to design yet"
+        action={{ to: '/input', label: 'Add your resume' }}
+      >
+        Designer previews your own resume in each template, colour and font, so it needs one first. Upload or paste
+        yours on step 1 and run the analysis.
+      </EmptyState>
+    );
+  }
 
   const templateFont = fontById(template.defaultFont);
   const effectiveFont = fontById(font) ?? templateFont;
+  const accentHex = accentById(accent)?.hex ?? null;
 
   return (
-    <section className="page designer">
-      <header>
-        <h1>Designer</h1>
-        <p className="muted">
-          Colour and font for your resume PDF, on top of the <strong>{template.label}</strong> template.{' '}
-          <Link to="/export">Change the template on Export</Link>. Layout, spacing and margins always come from the
-          template.
-        </p>
-      </header>
-
-      <section className="card">
-        <fieldset className="designer__group">
-          <legend className="field-label">Accent colour</legend>
-          <div className="swatches">
-            <Swatch id={null} label="Template default" hex={null} checked={accent === null} onPick={() => choose({ resumeAccent: null })} />
-            {ACCENT_CHOICES.map((a) => (
-              <Swatch key={a.id} id={a.id} label={a.label} hex={a.hex} checked={accent === a.id} onPick={() => choose({ resumeAccent: a.id })} />
-            ))}
-          </div>
-          <p className="muted designer__note">{ACCENT_NOTES[template.accentUse]}</p>
-        </fieldset>
-
-        <label className="field-label" htmlFor="designer-font">
-          Font
-        </label>
-        <select
-          id="designer-font"
-          value={font ?? ''}
-          onChange={(event) => choose({ resumeFont: resolveFontChoice(event.target.value) })}
-        >
-          <option value="">Template default ({templateFont.label})</option>
-          {FONT_CHOICES.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.label} ({f.note.split(',')[0].toLowerCase()})
-            </option>
-          ))}
-        </select>
-        <p className="muted designer__note">
-          {effectiveFont.id === 'courier'
-            ? 'Courier is monospaced and much wider than the others, so the same resume takes noticeably more pages. It reads fine to an ATS; it just costs room.'
-            : 'Only the fonts built into every PDF reader are offered, so nothing is downloaded and every word stays selectable text.'}
-        </p>
-
-        <p className="actions">
-          <button
-            type="button"
-            className="button"
-            onClick={() => choose({ resumeAccent: null, resumeFont: null })}
-            disabled={accent === null && font === null}
-          >
-            Reset to the template&apos;s own colour and font
-          </button>
-        </p>
-      </section>
+    <section className="page page--wide designer">
+      <PageHeader
+        eyebrow="Tools · Designer"
+        title="Design your resume"
+        actions={
+          <Link to="/export" className="button">
+            Back to export
+            <Icon name="arrowRight" size={16} />
+          </Link>
+        }
+      >
+        Template, colour and font for your PDF. Layout, spacing and margins always come from the template, and every
+        choice keeps the resume readable to an ATS.
+      </PageHeader>
 
       {unsupportedChars.length > 0 && (
         <div className="notice notice--warn" role="status">
@@ -136,14 +109,86 @@ export default function Designer() {
         </div>
       )}
 
-      <section className="card">
-        <h2>Preview</h2>
-        <PreviewBoundary>
-          <Suspense fallback={<p className="muted">Loading the PDF preview...</p>}>
-            <PdfPreview resume={resume} template={template.id} accent={accent} font={font} fileName={fileName} />
-          </Suspense>
-        </PreviewBoundary>
-      </section>
+      <div className="workspace workspace--preview">
+        <div className="stack">
+          <section className="card">
+            <TemplatePicker
+              value={template.id}
+              onChange={(id) => choose({ resumeTemplate: resolveResumeTemplate(id) })}
+              accentHex={accentHex}
+              note={false}
+            />
+          </section>
+
+          <section className="card">
+            <fieldset className="designer__group">
+              <legend className="field-label">Accent colour</legend>
+              <div className="swatches">
+                <Swatch id={null} label="Template default" hex={null} checked={accent === null} onPick={() => choose({ resumeAccent: null })} />
+                {ACCENT_CHOICES.map((a) => (
+                  <Swatch key={a.id} id={a.id} label={a.label} hex={a.hex} checked={accent === a.id} onPick={() => choose({ resumeAccent: a.id })} />
+                ))}
+              </div>
+              <p className="muted designer__note">{ACCENT_NOTES[template.accentUse]}</p>
+            </fieldset>
+          </section>
+
+          <section className="card">
+            <label className="field-label" htmlFor="designer-font" style={{ marginTop: 0 }}>
+              Font
+            </label>
+            <div className="designer__font-row">
+              <span className={`font-sample font-sample--${effectiveFont.id}`} aria-hidden="true">
+                Aa
+              </span>
+              <select
+                id="designer-font"
+                value={font ?? ''}
+                onChange={(event) => choose({ resumeFont: resolveFontChoice(event.target.value) })}
+              >
+                <option value="">Template default ({templateFont.label})</option>
+                {FONT_CHOICES.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} ({f.note.split(',')[0].toLowerCase()})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="muted designer__note">
+              {effectiveFont.id === 'courier'
+                ? 'Courier is monospaced and much wider than the others, so the same resume takes noticeably more pages. It reads fine to an ATS; it just costs room.'
+                : 'Only the fonts built into every PDF reader are offered, so nothing is downloaded and every word stays selectable text.'}
+            </p>
+
+            <p className="actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => choose({ resumeAccent: null, resumeFont: null })}
+                disabled={accent === null && font === null}
+              >
+                <Icon name="refresh" size={15} />
+                Reset colour and font
+              </button>
+            </p>
+          </section>
+        </div>
+
+        <div>
+          <PreviewBoundary>
+            <Suspense
+              fallback={
+                <div className="preview-loading" role="status">
+                  <span>Preparing the PDF preview…</span>
+                  <span className="progress-bar" aria-hidden="true" />
+                </div>
+              }
+            >
+              <PdfPreview resume={resume} template={template.id} accent={accent} font={font} fileName={fileName} />
+            </Suspense>
+          </PreviewBoundary>
+        </div>
+      </div>
     </section>
   );
 }
@@ -155,23 +200,8 @@ function Swatch({ id, label, hex, checked, onPick }) {
       <input type="radio" name="designer-accent" value={id ?? ''} checked={checked} onChange={onPick} />
       <span className={`swatch__chip${hex ? '' : ' swatch__chip--default'}`} style={hex ? { background: hex } : undefined} aria-hidden="true" />
       <span className="swatch__label">{label}</span>
+      {checked && <Icon name="check" size={14} className="swatch__check" />}
     </label>
-  );
-}
-
-function EmptyState() {
-  return (
-    <section className="page designer">
-      <h1>Nothing to design yet</h1>
-      <p className="muted">
-        Designer previews your own resume, so it needs one first. Upload or paste yours on step 1 and run the analysis.
-      </p>
-      <p>
-        <Link to="/input" className="button button--primary">
-          Go to step 1
-        </Link>
-      </p>
-    </section>
   );
 }
 
@@ -189,9 +219,12 @@ class PreviewBoundary extends Component {
   render() {
     if (this.state.failed) {
       return (
-        <p className="inline-status inline-status--error" role="status">
-          The PDF preview could not be built. Reload the page to try again.
-        </p>
+        <div className="error-notice" role="alert">
+          <div className="error-notice__body">
+            <p className="error-notice__title">The PDF preview couldn&rsquo;t be built</p>
+            <p className="error-notice__message">Reload the page to try again.</p>
+          </div>
+        </div>
       );
     }
     return this.props.children;

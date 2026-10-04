@@ -2,7 +2,13 @@ import { Component, Suspense, lazy, useCallback, useMemo, useState } from 'react
 import { Link } from 'react-router';
 
 import { ACTIONS, useApp } from '../context/AppContext.jsx';
-import { RESUME_TEMPLATES, resolveResumeTemplate } from '../components/export/resumeTemplates.js';
+import Icon from '../components/Icon.jsx';
+import TemplatePicker from '../components/export/TemplatePicker.jsx';
+import EmptyState from '../components/ui/EmptyState.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
+import ScoreRing from '../components/ui/ScoreRing.jsx';
+import { gradeTone, gradeVerdict } from '../components/ui/scoreBands.js';
+import { resolveResumeTemplate, templateById } from '../components/export/resumeTemplates.js';
 import { accentById, fontById, resolveAccentChoice, resolveFontChoice } from '../components/export/resumeDesign.js';
 import {
   buildResumeFileName,
@@ -29,9 +35,7 @@ import {
  * not an artefact of one run, so it should outlive the run: CLEAR_ANALYSIS (a
  * new Input run for a new job) keeps `settings`, and so keeps the template.
  * "Start over" resets settings along with everything else, the same as the
- * provider. `settings` is already persisted as a 'flat' block, which keeps
- * string values only, so no new PERSISTED_FIELDS entry and no SESSION_VERSION
- * bump were needed. An unknown id read back from storage renders the default
+ * provider. An unknown id read back from storage renders the default
  * (resolveResumeTemplate), never a blank preview.
  *
  * Switching is live: the same normalised resume is handed to a different
@@ -72,29 +76,90 @@ export default function Export() {
     }
   }, [plainText]);
 
-  if (!raw) return <EmptyState />;
-  if (!hasExportableContent(resume)) return <EmptyState parsedButEmpty />;
+  // A .txt of the same text, made in the browser from a Blob. Nothing is
+  // fetched or uploaded; the object URL is released straight after.
+  const downloadText = useCallback(() => {
+    const url = URL.createObjectURL(new Blob([plainText], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName.replace(/\.pdf$/i, '.txt');
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, [fileName, plainText]);
+
+  if (!raw) {
+    return (
+      <EmptyState icon="download" title="Nothing to export yet" action={{ to: '/input', label: 'Add your resume' }}>
+        Export turns your resume into an ATS-friendly PDF or plain text. It needs a resume to work with: upload or
+        paste yours on step 1 and run the analysis.
+      </EmptyState>
+    );
+  }
+  if (!hasExportableContent(resume)) {
+    return (
+      <EmptyState icon="alert" title="Nothing usable came out of your resume" action={{ to: '/input', label: 'Check it on step 1' }}>
+        Your resume was read, but there is no name, experience, skills or education to print. Go back to step 1,
+        check the extracted text, and run it again.
+      </EmptyState>
+    );
+  }
+
+  const templateInfo = templateById(template);
+  const accentInfo = accentById(accent);
+  const fontInfo = fontById(font) ?? fontById(templateInfo.defaultFont);
+  const score = state.atsScore ?? null;
 
   return (
-    <section className="page export">
-      <header className="export__head">
-        <p className="export__step">Step 4 of 4</p>
-        <h1>Export your resume</h1>
-        <p className="muted">Check the preview, then download the PDF or copy the text.</p>
-      </header>
+    <section className="page page--wide export">
+      <PageHeader eyebrow="Step 4 of 4" title="Your resume is ready.">
+        Check the preview, choose a template, then download the PDF or copy the text.
+      </PageHeader>
 
-      {source === 'tailored' ? (
-        <div className="notice notice--ok" role="status">
-          <p>Using your tailored resume from step 3.</p>
+      <section className="card ready" aria-label="Export summary">
+        <span className="ready__mark">
+          <Icon name="check" size={22} />
+        </span>
+        <div>
+          <h2 className="ready__title">{resume.name || 'Your resume'}</h2>
+          <ul className="ready__facts">
+            <li>
+              Template <strong>{templateInfo.label}</strong>
+            </li>
+            <li>
+              Font <strong>{fontInfo?.label ?? 'Template default'}</strong>
+            </li>
+            <li>
+              Colour <strong>{accentInfo?.label ?? 'Template default'}</strong>
+            </li>
+            <li>
+              {source === 'tailored' ? (
+                <strong>Tailored for this job</strong>
+              ) : (
+                <>
+                  Original resume · <Link to="/tailor">Tailor it first</Link>
+                </>
+              )}
+            </li>
+          </ul>
         </div>
-      ) : (
-        <div className="notice notice--info" role="status">
-          <p>
-            Using your resume as it was read in step 1. You haven&apos;t run the tailoring pass.{' '}
-            <Link to="/tailor">Tailor it for the job</Link> first, or export it as it is.
-          </p>
-        </div>
-      )}
+        {score && (
+          <div className="ready__score">
+            <ScoreRing percentage={score.percentage} size={52} tone={gradeTone(score)}>
+              <span className="ring-figure ring-figure--sm">
+                <span className="ring-figure__pct">{score.grade}</span>
+              </span>
+            </ScoreRing>
+            <span className="ready__score-text">
+              <strong>
+                {score.total} / {score.scoreableMax}
+              </strong>
+              {gradeVerdict(score)}
+            </span>
+          </div>
+        )}
+      </section>
 
       {unsupportedChars.length > 0 && (
         <div className="notice notice--warn" role="status">
@@ -103,99 +168,89 @@ export default function Export() {
             {unsupportedChars.map((char) => `"${char}"`).join(' ')}
           </p>
           <p>
-            Every template and every Designer font is a standard built-in PDF font (Helvetica, Times or Courier) that only covers Western
-            European characters, so these may come out wrong or missing whichever template you pick. Check the
-            preview. The plain-text copy below is not affected.
+            Every template and every Designer font is a standard built-in PDF font (Helvetica, Times or Courier) that
+            only covers Western European characters, so these may come out wrong or missing whichever template you
+            pick. Check the preview. The plain-text copy is not affected.
           </p>
         </div>
       )}
 
-      <section className="card">
-        <h2>PDF</h2>
-        <TemplatePicker value={template} onChange={chooseTemplate} />
-        <p className="muted template-picker__note">
-          Colour: {accentById(accent)?.label ?? 'template default'}. Font: {fontById(font)?.label ?? 'template default'}.{' '}
-          <Link to="/designer">Change them in Designer</Link>.
-        </p>
-        <PdfErrorBoundary>
-          <Suspense fallback={<p className="muted">Loading the PDF preview...</p>}>
-            <PdfPreview resume={resume} template={template} accent={accent} font={font} fileName={fileName} />
-          </Suspense>
-        </PdfErrorBoundary>
-      </section>
+      <div className="workspace workspace--preview">
+        <div className="stack">
+          <section className="card">
+            <TemplatePicker value={template} onChange={chooseTemplate} accentHex={accentInfo?.hex ?? null} />
+          </section>
 
-      <section className="card">
-        <h2>Plain text</h2>
-        <p className="muted">
-          For application forms that only have a text box and no file upload.
-        </p>
-        <p className="actions">
-          <button type="button" className="button" onClick={copy}>
-            Copy as plain text
-          </button>
-        </p>
-        {copyStatus && (
-          <p className={`inline-status ${copyStatus.ok ? 'inline-status--ok' : 'inline-status--error'}`} role="status">
-            {copyStatus.message}
-          </p>
-        )}
-        <label className="field-label" htmlFor="export-plain-text">
-          Text that will be copied
-        </label>
-        <textarea id="export-plain-text" readOnly rows={18} value={plainText} />
-      </section>
-    </section>
-  );
-}
+          <section className="card">
+            <h2>Design</h2>
+            <ul className="design-summary">
+              <li>
+                <span>Template</span>
+                <span>{templateInfo.label}</span>
+              </li>
+              <li>
+                <span>Font</span>
+                <span>{fontInfo?.label ?? 'Template default'}</span>
+              </li>
+              <li>
+                <span>Colour</span>
+                <span>
+                  {accentInfo && (
+                    <span className="design-summary__swatch" style={{ background: accentInfo.hex }} aria-hidden="true" />
+                  )}
+                  {accentInfo?.label ?? 'Template default'}
+                </span>
+              </li>
+            </ul>
+            <Link to="/designer" className="button">
+              <Icon name="palette" size={16} />
+              Customize design
+            </Link>
+          </section>
 
-/**
- * A radio group, so it is one tab stop with arrow-key selection for free. Every
- * option is a text description rather than a thumbnail: a thumbnail would mean
- * rendering four PDFs to show one, and the live preview below already shows the
- * real thing the moment an option is picked.
- */
-function TemplatePicker({ value, onChange }) {
-  return (
-    <fieldset className="template-picker">
-      <legend className="field-label">Template</legend>
-      <p className="muted template-picker__note">
-        Every template is one column with standard headings and real, selectable text, so an ATS reads them all the
-        same way. Only the look changes.
-      </p>
-      <div className="template-picker__options">
-        {RESUME_TEMPLATES.map((t) => (
-          <label key={t.id} className={`template-option${t.id === value ? ' template-option--selected' : ''}`}>
-            <input
-              type="radio"
-              name="resume-template"
-              value={t.id}
-              checked={t.id === value}
-              onChange={() => onChange(t.id)}
-            />
-            <span className="template-option__label">{t.label}</span>
-            <span className="template-option__description">{t.description}</span>
-          </label>
-        ))}
+          <section className="card">
+            <h2>Plain text</h2>
+            <p className="muted">For application forms that only have a text box and no file upload.</p>
+            <div className="actions">
+              <button type="button" className="button" onClick={copy}>
+                <Icon name="copy" size={15} />
+                Copy as plain text
+              </button>
+              <button type="button" className="button button--ghost" onClick={downloadText}>
+                <Icon name="download" size={15} />
+                Download .txt
+              </button>
+            </div>
+            {copyStatus && (
+              <p className={`inline-status ${copyStatus.ok ? 'inline-status--ok' : 'inline-status--error'}`} role="status">
+                {copyStatus.message}
+              </p>
+            )}
+            <label className="field-label" htmlFor="export-plain-text">
+              Text that will be copied
+            </label>
+            <textarea id="export-plain-text" className="textarea--source" readOnly rows={10} value={plainText} />
+          </section>
+        </div>
+
+        <div>
+          <PdfErrorBoundary>
+            <Suspense fallback={<PreviewLoading />}>
+              <PdfPreview resume={resume} template={template} accent={accent} font={font} fileName={fileName} />
+            </Suspense>
+          </PdfErrorBoundary>
+        </div>
       </div>
-    </fieldset>
+    </section>
   );
 }
 
-function EmptyState({ parsedButEmpty = false }) {
+function PreviewLoading() {
   return (
-    <section className="page export">
-      <h1>Nothing to export yet</h1>
-      <p className="muted">
-        {parsedButEmpty
-          ? 'Your resume was read, but nothing usable came out of it -- no name, experience, skills or education. Go back to step 1, check the extracted text, and run it again.'
-          : 'Export needs a resume to work with. Upload or paste yours on step 1 and run the analysis first.'}
-      </p>
-      <p>
-        <Link to="/input" className="button button--primary">
-          Go to step 1
-        </Link>
-      </p>
-    </section>
+    <div className="preview-loading" role="status">
+      <span>Preparing the PDF preview…</span>
+      <span className="progress-bar" aria-hidden="true" />
+    </div>
   );
 }
 
@@ -217,9 +272,14 @@ class PdfErrorBoundary extends Component {
   render() {
     if (this.state.failed) {
       return (
-        <p className="inline-status inline-status--error" role="status">
-          The PDF preview could not be built. Reload the page to try again. The plain-text copy below still works.
-        </p>
+        <div className="error-notice" role="alert">
+          <div className="error-notice__body">
+            <p className="error-notice__title">The PDF preview couldn&rsquo;t be built</p>
+            <p className="error-notice__message">
+              Reload the page to try again. The plain-text copy beside this still works.
+            </p>
+          </div>
+        </div>
       );
     }
     return this.props.children;

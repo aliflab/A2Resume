@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { PDFDownloadLink, PDFViewer } from '@react-pdf/renderer';
 
+import Icon from '../Icon.jsx';
 import { resumeDocumentFor } from './resumeDocuments.js';
 import CoverLetterDocument from './CoverLetterDocument.jsx';
 import { resolveResumeTheme } from './resumeDesign.js';
@@ -28,7 +29,8 @@ import { templateById } from './resumeTemplates.js';
  * designed in.
  *
  * The preview and the download are built from the same element. What the user
- * sees in the frame is what they get in the file.
+ * sees in the frame is what they get in the file. The frame sits on a canvas
+ * and stays paper-white in both themes: it is the exported document.
  */
 const TEMPLATES = {
   resume: (data, template, accent, font) => {
@@ -48,20 +50,32 @@ export default function PdfPreview({ kind = 'resume', data, resume, template, ac
   );
 
   return (
-    <>
-      <p className="actions">
+    <div className="pdf-preview">
+      <div className="pdf-preview__toolbar">
         <PDFDownloadLink document={doc} fileName={fileName} className="button button--primary">
           {({ loading, error }) => {
             if (error) return 'Could not build the PDF';
-            return loading ? 'Preparing the PDF...' : 'Download PDF';
+            return loading ? (
+              'Preparing the PDF...'
+            ) : (
+              <>
+                <Icon name="download" size={16} />
+                Download PDF
+              </>
+            );
           }}
         </PDFDownloadLink>
-        <span className="muted">{fileName}</span>
-      </p>
+        <span className="pdf-preview__file">
+          <Icon name="file" size={14} />
+          <span>{fileName}</span>
+        </span>
+      </div>
 
-      <PDFViewer className="export__preview" showToolbar>
-        {doc}
-      </PDFViewer>
-    </>
+      <div className="pdf-canvas">
+        <PDFViewer className="export__preview" showToolbar>
+          {doc}
+        </PDFViewer>
+      </div>
+    </div>
   );
 }

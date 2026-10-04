@@ -20,10 +20,11 @@ export default function LazyPage({ children }) {
     <LazyPageBoundary>
       <Suspense
         fallback={
-          <section className="page" aria-busy="true">
-            <p className="muted" role="status">
-              Loading...
-            </p>
+          <section className="page lazy-loading" aria-busy="true">
+            <div className="loading-line" role="status">
+              <span>Loading...</span>
+              <span className="progress-bar" aria-hidden="true" />
+            </div>
           </section>
         }
       >
@@ -47,10 +48,15 @@ class LazyPageBoundary extends Component {
     if (this.state.failed) {
       return (
         <section className="page">
-          <p className="inline-status inline-status--error" role="alert">
-            This page could not be loaded. Check your connection and reload the page to try again. Your work is saved
-            in this browser.
-          </p>
+          <div className="error-notice" role="alert">
+            <div className="error-notice__body">
+              <p className="error-notice__title">This page couldn&rsquo;t be loaded</p>
+              <p className="error-notice__message">
+                This page could not be loaded. Check your connection and reload the page to try again. Your work is
+                saved in this browser.
+              </p>
+            </div>
+          </div>
         </section>
       );
     }

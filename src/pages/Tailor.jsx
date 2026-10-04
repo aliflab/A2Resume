@@ -1,8 +1,14 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
 import TailoredResumeEditor from '../components/tailor/TailoredResumeEditor.jsx';
+import Icon from '../components/Icon.jsx';
+import EmptyState from '../components/ui/EmptyState.jsx';
+import ErrorNotice from '../components/ui/ErrorNotice.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
+import ScoreRing from '../components/ui/ScoreRing.jsx';
+import { gradeTone } from '../components/ui/scoreBands.js';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
 import { compareScores, describeScoreChange } from '../services/currentResume.js';
 import { describeManualEdits } from '../services/tailoredEdits.js';
@@ -92,89 +98,216 @@ export default function Tailor() {
     else discard();
   }, [discard, edits.length]);
 
-  if (!resume || !parsedJD) return <EmptyState />;
+  // What the side panel summarises. All of it is read from what the pass and
+  // the reducer already produced -- nothing here is computed for display only
+  // except the de-duplicated list of sections the AI touched.
+  const gained = comparison?.keywords?.improved ?? [];
+  const lost = comparison?.keywords?.regressed ?? [];
+  const sectionsChanged = [
+    ...new Set(changesLog.map((c) => String(c?.section || '').trim()).filter(Boolean)),
+  ].map((section) => section.charAt(0).toUpperCase() + section.slice(1));
+
+  if (!resume || !parsedJD) {
+    return (
+      <EmptyState icon="pencil" title="Nothing to tailor yet" action={{ to: '/input', label: 'Add your resume' }}>
+        Tailoring rewrites your resume toward one job description, so it needs both. Add them on step 1 and run the
+        analysis first.
+      </EmptyState>
+    );
+  }
+
+  const role = [parsedJD?.jobTitle, parsedJD?.company].filter(Boolean).join(' at ');
 
   return (
-    <section className="page tailor">
-      <header className="tailor__head">
-        <p className="tailor__step">Step 3 of 4</p>
-        <h1>Tailor your resume</h1>
-        <p className="muted">
-          Rewrites your bullets toward the posting. It never deletes a role, a date, or a skill, and it is not
-          allowed to invent a number your resume does not already support. You can then edit the result by hand.
-        </p>
-      </header>
+    <section className="page page--wide tailor">
+      <PageHeader eyebrow="Step 3 of 4" title="Tailor your resume">
+        Rewrites your bullets toward the posting. It never deletes a role, a date, or a skill, and it is not allowed
+        to invent a number your resume does not already support. You can then edit the result by hand.
+      </PageHeader>
 
       {!tailored && (
-        <section className="card">
-          <h2>Run the tailoring pass</h2>
-          {!provider || !hasKey ? (
-            <p className="inline-status inline-status--error">
-              This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
-            </p>
-          ) : (
+        <section className="card tailor-start" aria-labelledby="tailor-start-title">
+          <div>
+            <h2 id="tailor-start-title">Improve your resume for {role || 'this job'}</h2>
             <p>
-              <button type="button" className="button button--primary" onClick={run} disabled={busy}>
-                {busy ? 'Tailoring your resume...' : 'Tailor my resume'}
+              One AI pass rewrites the relevant sections in the posting&rsquo;s language. Nothing is final: you review
+              every change and can edit any part by hand before you export.
+            </p>
+            <ul className="tailor-start__rules">
+              <li>
+                <Icon name="check" size={14} />
+                Never deletes a role, date or skill
+              </li>
+              <li>
+                <Icon name="check" size={14} />
+                Never invents a number
+              </li>
+              <li>
+                <Icon name="check" size={14} />
+                Your original stays untouched
+              </li>
+            </ul>
+          </div>
+          <div>
+            {!provider || !hasKey ? (
+              <p className="inline-status inline-status--error">
+                This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
+              </p>
+            ) : (
+              <button type="button" className="button button--primary button--lg" onClick={run} disabled={busy}>
+                {busy ? 'Improving…' : 'Tailor my resume'}
+                {!busy && <Icon name="arrowRight" size={18} />}
               </button>
-            </p>
-          )}
+            )}
+          </div>
+          {busy && <WorkingLine provider={provider} />}
           {error && (
-            <p className="inline-status inline-status--error">
-              {error.message} {error.isAuth && <Link to="/settings">Open Settings</Link>}
-            </p>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <ErrorNotice compact error={error} onRetry={hasKey ? run : undefined} />
+            </div>
           )}
         </section>
       )}
 
       {tailored && (
-        <>
-          <section className="card">
-            <h2>What changed</h2>
-            <p className="muted">
-              {changesLog.length === 0
-                ? 'The AI pass reported no changes.'
-                : `The AI pass reported ${plural(changesLog.length, 'change')}.`}
-            </p>
-            {edits.length > 0 && (
-              <p className="tailor__edits" role="status">
-                You have edited {plural(edits.length, 'part')} by hand since then: {edits.join('; ')}. Export uses your
-                edited version.
-              </p>
-            )}
-            {comparison && (
-              <p className="tailor__score" role="status">
-                ATS score: {comparison.before.total} / {comparison.before.scoreableMax} before tailoring,{' '}
-                <strong>
-                  {comparison.after.total} / {comparison.after.scoreableMax} now
-                </strong>{' '}
-                ({describeScoreChange(comparison)}). It updates each time you save an edit.{' '}
-                <Link to="/analyze">See which keywords moved</Link>.
-              </p>
-            )}
+        <div className="workspace workspace--aside">
+          <div className="stack">
+            {corrections.length > 0 && <CorrectionsNotice corrections={corrections} />}
+            <TailoredResumeEditor resume={tailored} />
+            {changesLog.length > 0 && <ChangesList changes={changesLog} edited={edits.length > 0} />}
+          </div>
 
-            {confirmingDiscard ? (
-              <DiscardConfirmation edits={edits} onConfirm={discard} onCancel={() => setConfirmingDiscard(false)} />
-            ) : (
-              <p className="actions">
-                <Link to="/export" className="button button--primary">
-                  Continue to export
-                </Link>
-                <button type="button" className="button" onClick={requestDiscard}>
-                  Discard and start over
-                </button>
-              </p>
-            )}
-          </section>
+          <aside className="aside" aria-label="Tailoring summary">
+            <section className="card tailor-panel">
+              <h2>Tailoring result</h2>
 
-          {corrections.length > 0 && <CorrectionsNotice corrections={corrections} />}
+              {comparison && (
+                <div className="tailor-panel__delta">
+                  <ScoreRing percentage={comparison.after.percentage} size={64} tone={gradeTone(comparison.after)}>
+                    <span className="ring-figure ring-figure--sm">
+                      <span className="ring-figure__pct">{comparison.after.grade}</span>
+                    </span>
+                  </ScoreRing>
+                  <div>
+                    <span
+                      className={`tailor-panel__points tailor-panel__points--${comparison.direction}`}
+                      aria-label={describeScoreChange(comparison)}
+                    >
+                      {comparison.delta > 0 ? '+' : ''}
+                      {comparison.delta} {comparison.unit === 'points' ? 'ATS points' : 'percentage points'}
+                    </span>
+                    <span className="muted">
+                      {comparison.before.total} → {comparison.after.total} / {comparison.after.scoreableMax}
+                    </span>
+                  </div>
+                </div>
+              )}
 
-          <TailoredResumeEditor resume={tailored} />
+              {comparison && (
+                <p className="tailor__score" role="status">
+                  ATS score: {comparison.before.total} / {comparison.before.scoreableMax} before tailoring,{' '}
+                  <strong>
+                    {comparison.after.total} / {comparison.after.scoreableMax} now
+                  </strong>{' '}
+                  ({describeScoreChange(comparison)}). It updates each time you save an edit.{' '}
+                  <Link to="/analyze">See which keywords moved</Link>.
+                </p>
+              )}
 
-          {changesLog.length > 0 && <ChangesList changes={changesLog} edited={edits.length > 0} />}
-        </>
+              <div className="tailor-panel__group">
+                <p className="tailor-panel__label">Keywords gained</p>
+                {gained.length === 0 ? (
+                  <p className="muted">None moved to a better bucket yet.</p>
+                ) : (
+                  <div className="pills">
+                    {gained.slice(0, 10).map((m) => (
+                      <span key={m.keyword} className="pill pill--success">
+                        {m.keyword}
+                      </span>
+                    ))}
+                    {gained.length > 10 && <span className="pill">+{gained.length - 10} more</span>}
+                  </div>
+                )}
+                {lost.length > 0 && (
+                  <p className="inline-status inline-status--warn">
+                    {plural(lost.length, 'keyword')} lost coverage. <Link to="/analyze">Check them</Link>.
+                  </p>
+                )}
+              </div>
+
+              {sectionsChanged.length > 0 && (
+                <div className="tailor-panel__group">
+                  <p className="tailor-panel__label">Sections improved</p>
+                  <div className="pills">
+                    {sectionsChanged.map((section) => (
+                      <span key={section} className="pill">
+                        {section}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="tailor-panel__group">
+                <ul className="metrics tailor-panel__stats">
+                  <li className="metric">
+                    <span className="metric__label">AI changes</span>
+                    <span className="metric__value">{changesLog.length}</span>
+                  </li>
+                  <li className="metric">
+                    <span className="metric__label">Your edits</span>
+                    <span className="metric__value">{edits.length}</span>
+                  </li>
+                </ul>
+                {edits.length > 0 && (
+                  <p className="tailor__edits" role="status">
+                    You have edited {plural(edits.length, 'part')} by hand since then: {edits.join('; ')}. Export uses
+                    your edited version.
+                  </p>
+                )}
+              </div>
+
+              <div className="tailor-panel__group">
+                {confirmingDiscard ? (
+                  <DiscardConfirmation edits={edits} onConfirm={discard} onCancel={() => setConfirmingDiscard(false)} />
+                ) : (
+                  <div className="actions">
+                    <Link to="/export" className="button button--primary">
+                      Continue to export
+                      <Icon name="arrowRight" size={16} />
+                    </Link>
+                    <button type="button" className="button button--ghost" onClick={requestDiscard}>
+                      Discard and start over
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          </aside>
+        </div>
       )}
     </section>
+  );
+}
+
+/** The one AI call on this page: an honest "still working" line with the time it has taken. */
+function WorkingLine({ provider }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="loading-line" role="status">
+      <span className="loading-line__text">
+        <span>Improving relevant sections with {PROVIDER_LABELS[provider] ?? provider}… this usually takes under a minute.</span>
+        <span className="loading-line__elapsed" aria-hidden="true">
+          {elapsed}s
+        </span>
+      </span>
+      <span className="progress-bar" aria-hidden="true" />
+    </div>
   );
 }
 
@@ -195,7 +328,7 @@ function DiscardConfirmation({ edits, onConfirm, onCancel }) {
         starts from your original resume from step 1, so none of these edits will carry over.
       </p>
       <p className="actions">
-        <button type="button" className="button button--danger" onClick={onConfirm}>
+        <button type="button" className="button button--danger-solid" onClick={onConfirm}>
           Discard my edits and start over
         </button>
         <button type="button" className="button" onClick={onCancel}>
@@ -203,23 +336,6 @@ function DiscardConfirmation({ edits, onConfirm, onCancel }) {
         </button>
       </p>
     </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <section className="page tailor">
-      <h1>Nothing to tailor yet</h1>
-      <p className="muted">
-        Tailoring needs your resume and the job description you are targeting. Add both on step 1 and run the
-        analysis first.
-      </p>
-      <p>
-        <Link to="/input" className="button button--primary">
-          Go to step 1
-        </Link>
-      </p>
-    </section>
   );
 }
 
@@ -252,13 +368,18 @@ function CorrectionsNotice({ corrections }) {
 function ChangesList({ changes, edited }) {
   return (
     <section className="card">
-      <h2>Before and after</h2>
-      {edited && (
-        <p className="muted">
-          This is what the AI pass changed. Your hand edits are not listed here, so an &ldquo;After&rdquo; below may
-          no longer match your resume.
-        </p>
-      )}
+      <div className="section-head">
+        <div>
+          <h2>
+            What the AI changed <span className="muted">({changes.length})</span>
+          </h2>
+          <p className="muted">
+            {edited
+              ? 'Your hand edits are not listed here, so an “After” below may no longer match your resume.'
+              : 'Each rewrite next to the original it replaced, with the reason it gave.'}
+          </p>
+        </div>
+      </div>
       <ol className="changes">
         {changes.map((change, i) => (
           <li key={`${change.section}-${i}`} className="change">

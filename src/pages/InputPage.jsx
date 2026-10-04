@@ -9,6 +9,9 @@ import { getKeyPresence, getApiKey, PROVIDER_IDS } from '../services/apiKeyServi
 import { SUPPORTED_PROVIDERS, PROVIDER_LABELS } from '../services/aiService.js';
 import { describeError, describeModelFallback } from '../utils/errorMessages.js';
 import { describeManualEdits } from '../services/tailoredEdits.js';
+import Icon from '../components/Icon.jsx';
+import ErrorNotice from '../components/ui/ErrorNotice.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
 
 /**
  * Step 1 of the wizard: get a resume and a job description in, pick a
@@ -37,11 +40,16 @@ export default function InputPage() {
   const navigate = useNavigate();
 
   // --- Resume input ---------------------------------------------------------
-  const [resumeMode, setResumeMode] = useState('upload'); // 'upload' | 'paste'
+  // Opens on the text when there already is some (a reload, or a return from
+  // step 2), so the resume being worked on is what the user sees first.
+  const [resumeMode, setResumeMode] = useState(() => (state.resumeText?.trim() ? 'paste' : 'upload')); // 'upload' | 'paste'
   const [resumeText, setResumeText] = useState(state.resumeText ?? '');
   const [resumeFileName, setResumeFileName] = useState(state.sources?.resumeFileName ?? null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfNotice, setPdfNotice] = useState(null); // { tone, message }
+  // What the last extraction found, for the file card. Display only: the
+  // text itself is `resumeText`, always shown and editable below it.
+  const [pdfInfo, setPdfInfo] = useState(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -109,6 +117,7 @@ export default function InputPage() {
       const result = await extractTextFromPdf(file);
       setResumeText(result.text);
       setResumeFileName(result.fileName);
+      setPdfInfo({ pageCount: result.pageCount, charCount: result.charCount, isLikelyScanned: result.isLikelyScanned });
 
       setPdfNotice({
         tone: result.isLikelyScanned ? 'warn' : 'ok',
@@ -124,6 +133,7 @@ export default function InputPage() {
       const described = describeError(err);
       setPdfNotice({ tone: 'error', message: described.message });
       setResumeFileName(null);
+      setPdfInfo(null);
     } finally {
       setPdfBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -242,192 +252,210 @@ export default function InputPage() {
   );
 
   const noProviders = availableProviders.length === 0;
+  const pasteRef = useRef(null);
+  const missing = [resumeText.trim() === '' && 'your resume', jdText.trim() === '' && 'the job description'].filter(Boolean);
+
+  if (running) {
+    return (
+      <section className="page input-page">
+        <ProgressWorkspace
+          current={stage}
+          provider={provider}
+          note={modelFallback?.stage === stage ? describeModelFallback(modelFallback) : null}
+          onCancel={() => abortRef.current?.abort()}
+        />
+      </section>
+    );
+  }
 
   return (
     <section className="page input-page">
-      <header className="input-page__head">
-        <p className="input-page__step">Step 1 of 4</p>
-        <h1>Add your resume and the job</h1>
-        <p className="input-page__lede">
-          Everything is processed in your browser. Your resume is only ever sent to the AI provider you
-          pick below, using your own key.
-        </p>
-      </header>
+      <PageHeader eyebrow="Step 1 of 4" title="Add your resume and the job">
+        Everything is processed in your browser. Your resume is only ever sent to the AI provider you pick below,
+        using your own key.
+      </PageHeader>
 
       <form onSubmit={handleRun}>
-        {/* ------------------------------------------------------------- */}
-        <fieldset className="card" disabled={running}>
-          <legend>1. Your resume</legend>
+        {error && <ErrorNotice error={error} onDismiss={() => dispatch({ type: ACTIONS.SET_ERROR, payload: null })} />}
 
-          <div className="tabs" role="tablist" aria-label="Resume input method">
-            <TabButton active={resumeMode === 'upload'} onClick={() => setResumeMode('upload')}>
-              Upload a PDF
-            </TabButton>
-            <TabButton active={resumeMode === 'paste'} onClick={() => setResumeMode('paste')}>
-              Paste text
-            </TabButton>
-          </div>
+        <div className="workspace workspace--split">
+          {/* ------------------------------------------------------------- */}
+          <fieldset className="card input-panel" disabled={running}>
+            <legend>
+              <PanelTitle icon="file" title="Your resume" />
+            </legend>
+            <p className="input-panel__intro">Upload the PDF you would send, or paste the text.</p>
 
-          {resumeMode === 'upload' && (
-            <div
-              className={`dropzone${dragging ? ' dropzone--active' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                id="resume-file"
-                onChange={(e) => handleFile(e.target.files?.[0])}
-                hidden
-              />
-              <label htmlFor="resume-file" className="button">
-                {pdfBusy ? 'Reading...' : 'Choose a PDF'}
-              </label>
-              <p className="muted">
-                or drop one here &middot; up to {formatBytes(MAX_FILE_SIZE)} &middot; never uploaded anywhere
-              </p>
-              <p className="muted">
-                Scanned or image-only PDFs have no text to read.{' '}
-                <button type="button" className="link" onClick={() => setResumeMode('paste')}>
-                  Paste the text instead
-                </button>
-                .
-              </p>
+            <div className="tabs" role="tablist" aria-label="Resume input method">
+              <TabButton active={resumeMode === 'upload'} onClick={() => setResumeMode('upload')}>
+                Upload a PDF
+              </TabButton>
+              <TabButton active={resumeMode === 'paste'} onClick={() => setResumeMode('paste')}>
+                {resumeFileName ? 'Extracted text' : 'Paste text'}
+              </TabButton>
             </div>
-          )}
 
-          {pdfNotice && <Notice tone={pdfNotice.tone}>{pdfNotice.message}</Notice>}
-
-          {resumeMode === 'paste' && (
-            <>
-              <label htmlFor="resume-text" className="field-label">
-                Resume text
-                {resumeFileName && <span className="muted"> &middot; extracted from {resumeFileName}</span>}
-              </label>
-              <textarea
-                id="resume-text"
-                value={resumeText}
-                onChange={(e) => setResumeText(e.target.value)}
-                rows={14}
-                placeholder="Paste your full resume here, including contact details, experience bullets, skills and education."
-                spellCheck={false}
-              />
-              <p className="muted">
-                {resumeText.trim() ? `${resumeText.length.toLocaleString()} characters` : 'Nothing yet.'} Fix any
-                mangled columns here before running -- what you see is exactly what gets parsed.
-              </p>
-            </>
-          )}
-        </fieldset>
-
-        {/* ------------------------------------------------------------- */}
-        <fieldset className="card" disabled={running}>
-          <legend>2. The job description</legend>
-
-          <label htmlFor="jd-url" className="field-label">
-            Fetch from a URL <span className="muted">(optional)</span>
-          </label>
-          <div className="row">
-            <input
-              id="jd-url"
-              type="url"
-              value={jdUrl}
-              onChange={(e) => setJdUrl(e.target.value)}
-              placeholder="https://jobs.example.com/postings/12345"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+            {resumeMode === 'upload' && (
+              <div
+                className={`dropzone${dragging ? ' dropzone--active' : ''}`}
+                onDragOver={(e) => {
                   e.preventDefault();
-                  handleFetchUrl();
-                }
-              }}
-            />
-            <button type="button" onClick={handleFetchUrl} disabled={urlBusy || !jdUrl.trim()}>
-              {urlBusy ? 'Fetching...' : 'Fetch'}
-            </button>
-          </div>
-          <p className="muted">
-            Fetching goes through public proxies and fails on some boards -- LinkedIn, Indeed and Glassdoor
-            block it outright. Pasting the text always works.
-          </p>
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+              >
+                <span className="dropzone__icon">
+                  <Icon name="upload" size={22} />
+                </span>
+                <p className="dropzone__title">{pdfBusy ? 'Reading your PDF…' : 'Drop your resume PDF here'}</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  id="resume-file"
+                  onChange={(e) => handleFile(e.target.files?.[0])}
+                  hidden
+                />
+                <label htmlFor="resume-file" className="button">
+                  {pdfBusy ? 'Reading…' : 'Choose a PDF'}
+                </label>
+                <p className="muted">
+                  PDF up to {formatBytes(MAX_FILE_SIZE)} &middot; read in your browser, never uploaded
+                </p>
+                <p className="muted">
+                  Scanned or image-only PDFs have no text to read.{' '}
+                  <button type="button" className="link" onClick={() => setResumeMode('paste')}>
+                    Paste the text instead
+                  </button>
+                  .
+                </p>
+              </div>
+            )}
 
-          {urlNotice && (
-            <Notice tone={urlNotice.tone}>
-              {urlNotice.message}
-              {urlNotice.hint && <> {urlNotice.hint}</>}
-            </Notice>
-          )}
+            {pdfNotice?.tone === 'error' && (
+              <ErrorNotice compact error={{ message: pdfNotice.message, kind: 'pdf' }} />
+            )}
 
-          <label htmlFor="jd-text" className="field-label">
-            Job description text
-          </label>
-          <textarea
-            id="jd-text"
-            value={jdText}
-            onChange={(e) => setJdText(e.target.value)}
-            rows={12}
-            placeholder="Paste the job description here -- responsibilities, requirements, and nice-to-haves."
-            spellCheck={false}
-          />
-          <p className="muted">
-            {jdText.trim() ? `${jdText.length.toLocaleString()} characters` : 'Nothing yet.'}
-          </p>
-        </fieldset>
-
-        {/* ------------------------------------------------------------- */}
-        <fieldset className="card" disabled={running}>
-          <legend>3. AI provider</legend>
-
-          {noProviders ? (
-            <Notice tone="warn">
-              No API keys are set up yet, so there is no provider to run with. A2Resume has no backend and no
-              account system -- it uses your own key, stored only in this browser.{' '}
-              <Link to="/settings">Add a key in Settings</Link> and come back.
-            </Notice>
-          ) : (
-            <>
-              <label htmlFor="provider" className="field-label">
-                Run this analysis with
-              </label>
-              <select id="provider" value={provider ?? ''} onChange={(e) => setProvider(e.target.value)}>
-                {availableProviders.map((id) => (
-                  <option key={id} value={id}>
-                    {PROVIDER_LABELS[id] ?? id}
-                  </option>
-                ))}
-              </select>
-              <p className="muted">
-                Only providers with a stored key are listed.{' '}
-                <Link to="/settings">Manage keys in Settings</Link>.
-                {availableProviders.length < KNOWN_PROVIDERS.length && (
-                  <> {KNOWN_PROVIDERS.length - availableProviders.length} other provider
-                    {KNOWN_PROVIDERS.length - availableProviders.length === 1 ? ' is' : 's are'} supported but
-                    have no key.</>
+            {resumeMode === 'paste' && (
+              <>
+                {resumeFileName && (
+                  <div className="file-card">
+                    <span className="file-card__icon">
+                      <Icon name="file" size={18} />
+                    </span>
+                    <span className="file-card__main">
+                      <span className="file-card__name">{resumeFileName}</span>
+                      <span className="file-card__meta">
+                        {pdfInfo
+                          ? `${pdfInfo.pageCount} page${pdfInfo.pageCount === 1 ? '' : 's'} · ${pdfInfo.charCount.toLocaleString()} characters extracted`
+                          : 'Text extracted from this file'}
+                      </span>
+                    </span>
+                    {pdfInfo?.isLikelyScanned ? (
+                      <span className="badge badge--warning">Looks scanned</span>
+                    ) : (
+                      <span className="badge badge--success">Extracted</span>
+                    )}
+                    <button type="button" className="button button--sm button--ghost" onClick={() => setResumeMode('upload')}>
+                      Replace
+                    </button>
+                  </div>
                 )}
-              </p>
-            </>
-          )}
-        </fieldset>
+                {pdfNotice?.tone === 'warn' && <Notice tone="warn">{pdfNotice.message}</Notice>}
 
-        {/* ------------------------------------------------------------- */}
-        {error && <ErrorPanel error={error} onDismiss={() => dispatch({ type: ACTIONS.SET_ERROR, payload: null })} />}
+                <label htmlFor="resume-text" className="field-label">
+                  {resumeFileName ? 'Extracted text — check it before you run' : 'Resume text'}
+                </label>
+                <textarea
+                  id="resume-text"
+                  className="textarea--source"
+                  value={resumeText}
+                  onChange={(e) => setResumeText(e.target.value)}
+                  rows={16}
+                  placeholder="Paste your full resume here, including contact details, experience bullets, skills and education."
+                  spellCheck={false}
+                />
+                <p className="text-meta">
+                  <span>Fix any mangled columns here. What you see is exactly what gets parsed.</span>
+                  <span>{resumeText.trim() ? `${resumeText.length.toLocaleString()} characters` : 'Empty'}</span>
+                </p>
+              </>
+            )}
+          </fieldset>
 
-        {running && (
-          <StageProgress
-            current={stage}
-            note={modelFallback?.stage === stage ? describeModelFallback(modelFallback) : null}
-          />
-        )}
+          {/* ------------------------------------------------------------- */}
+          <fieldset className="card input-panel" disabled={running}>
+            <legend>
+              <PanelTitle icon="briefcase" title="The job description" />
+            </legend>
+            <p className="input-panel__intro">Paste the posting, or fetch it from its URL and check what came back.</p>
+
+            <label htmlFor="jd-url" className="field-label">
+              Job posting URL <span className="muted">(optional)</span>
+            </label>
+            <div className="row">
+              <input
+                id="jd-url"
+                type="url"
+                value={jdUrl}
+                onChange={(e) => setJdUrl(e.target.value)}
+                placeholder="https://jobs.example.com/postings/12345"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleFetchUrl();
+                  }
+                }}
+              />
+              <button type="button" onClick={handleFetchUrl} disabled={urlBusy || !jdUrl.trim()}>
+                <Icon name="link" size={15} />
+                {urlBusy ? 'Fetching…' : 'Fetch'}
+              </button>
+            </div>
+            <p className="field-hint">
+              Fetching goes through public proxies and fails on some boards. LinkedIn, Indeed and Glassdoor block it
+              outright.
+            </p>
+
+            {urlNotice &&
+              (urlNotice.tone === 'error' ? (
+                <ErrorNotice compact error={{ message: urlNotice.message, hint: urlNotice.hint, kind: 'scrape' }}>
+                  <button type="button" className="button button--sm" onClick={() => pasteRef.current?.focus()}>
+                    Paste job description
+                  </button>
+                </ErrorNotice>
+              ) : (
+                <Notice tone={urlNotice.tone}>{urlNotice.message}</Notice>
+              ))}
+
+            <label htmlFor="jd-text" className="field-label">
+              Job description text
+            </label>
+            <textarea
+              ref={pasteRef}
+              id="jd-text"
+              className="textarea--source"
+              value={jdText}
+              onChange={(e) => setJdText(e.target.value)}
+              rows={14}
+              placeholder="Paste the job description here: responsibilities, requirements, and nice-to-haves."
+              spellCheck={false}
+            />
+            <p className="text-meta">
+              <span className="paste-callout">
+                <Icon name="checkCircle" size={14} />
+                Pasting always works, on every job board.
+              </span>
+              <span>{jdText.trim() ? `${jdText.length.toLocaleString()} characters` : 'Empty'}</span>
+            </p>
+          </fieldset>
+        </div>
 
         {/* A new run clears tailoring (CLEAR_ANALYSIS), hand edits included.
             Said up front, next to the button that does it. */}
-        {!running && state.tailoredResume && describeManualEdits(state.tailorManualEdits).length > 0 && (
-          <div className="notice notice--warn" role="status">
+        {state.tailoredResume && describeManualEdits(state.tailorManualEdits).length > 0 && (
+          <div className="notice notice--warn" role="status" style={{ marginTop: 'var(--space-6)' }}>
             <p>
               <strong>
                 Running a new analysis replaces your tailored resume from step 3, including{' '}
@@ -439,21 +467,41 @@ export default function InputPage() {
           </div>
         )}
 
-        <div className="actions">
-          <button type="submit" className="button button--primary" disabled={!canRun}>
-            {running ? 'Analysing...' : 'Analyse my resume'}
-          </button>
-          {running && (
-            <button type="button" onClick={() => abortRef.current?.abort()}>
-              Cancel
-            </button>
-          )}
-          {!running && !canRun && !noProviders && (
-            <p className="muted">
-              {resumeText.trim() === '' && 'Add your resume. '}
-              {jdText.trim() === '' && 'Add the job description. '}
+        {/* ------------------------------------------------------------- */}
+        <div className="run-bar">
+          {noProviders ? (
+            <p className="run-bar__none" role="status">
+              <Icon name="alert" size={16} />
+              <span>
+                No AI provider is set up yet. A2Resume uses your own key, stored only in this browser.{' '}
+                <Link to="/settings">Add a key in Settings</Link>.
+              </span>
             </p>
+          ) : (
+            <div className="run-bar__provider">
+              <label htmlFor="provider" className="field-label">
+                AI provider
+              </label>
+              <select id="provider" value={provider ?? ''} onChange={(e) => setProvider(e.target.value)}>
+                {availableProviders.map((id) => (
+                  <option key={id} value={id}>
+                    {PROVIDER_LABELS[id] ?? id}
+                  </option>
+                ))}
+              </select>
+              <Link to="/settings">Manage providers</Link>
+            </div>
           )}
+
+          <div className="run-bar__go">
+            {!canRun && !noProviders && missing.length > 0 && (
+              <span className="run-bar__missing">Add {missing.join(' and ')} to continue.</span>
+            )}
+            <button type="submit" className="button button--primary button--lg" disabled={!canRun}>
+              Analyze my resume
+              <Icon name="arrowRight" size={18} />
+            </button>
+          </div>
         </div>
       </form>
     </section>
@@ -481,6 +529,17 @@ function safeKeyPresence() {
 // Presentational bits
 // ---------------------------------------------------------------------------
 
+function PanelTitle({ icon, title }) {
+  return (
+    <span className="panel-title">
+      <span className="panel-title__icon">
+        <Icon name={icon} size={17} />
+      </span>
+      {title}
+    </span>
+  );
+}
+
 function TabButton({ active, onClick, children }) {
   return (
     <button type="button" role="tab" aria-selected={active} className={active ? 'tab tab--active' : 'tab'} onClick={onClick}>
@@ -497,62 +556,83 @@ function Notice({ tone = 'ok', children }) {
   );
 }
 
+// What each stage is doing, in words, and where it runs. The two AI calls are
+// slow and the two local steps are instant -- saying which is which is what
+// makes a long pause on step 1 read as work rather than a hang.
+const STAGE_COPY = {
+  parseResume: { icon: 'file', working: 'Reading your resume…', ai: true },
+  parseJD: { icon: 'briefcase', working: 'Understanding the role…', ai: true },
+  gapAnalysis: { icon: 'compare', working: 'Comparing your experience…', ai: false },
+  atsScore: { icon: 'gauge', working: 'Calculating your score…', ai: false },
+};
+
 /**
- * Per-stage progress rather than one spinner. The two AI calls are slow and
- * the two local steps are instant, so a single spinner would sit still for
- * most of the run and tell the user nothing about where it is.
+ * The page while the pipeline runs: one row per stage rather than one
+ * spinner. The two AI calls are slow and the two local steps are instant, so
+ * a single spinner would sit still for most of the run and tell the user
+ * nothing about where it is.
  *
- * `note` replaces the active stage's "working..." when the provider's
- * fallback chain has moved on to another model. Same list, same row -- it is
- * a different kind of waiting, not a different stage, and a long pause during
- * a real overload should say why rather than look frozen.
+ * `note` appears on the active row when the provider's fallback chain has
+ * moved on to another model. Same list, same row -- a different kind of
+ * waiting, not a different stage, and a long pause during a real overload
+ * should say why rather than look frozen. It never names a model id.
  */
-function StageProgress({ current, note = null }) {
+function ProgressWorkspace({ current, provider, note, onCancel }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const providerName = PROVIDER_LABELS[provider] ?? provider ?? 'your provider';
   const currentIndex = PIPELINE_STAGES.findIndex((s) => s.id === current);
 
   return (
-    <ol className="stages" aria-live="polite">
-      {PIPELINE_STAGES.map((s, i) => {
-        const stateName = currentIndex === -1 ? 'pending' : i < currentIndex ? 'done' : i === currentIndex ? 'active' : 'pending';
-        return (
-          <li key={s.id} className={`stage stage--${stateName}`}>
-            <span className="stage__marker" aria-hidden="true">
-              {stateName === 'done' ? '✓' : stateName === 'active' ? '•' : '○'}
-            </span>
-            <span>{s.label}</span>
-            {stateName === 'active' && !note && <span className="muted"> - working...</span>}
-            {stateName === 'active' && note && <span className="stage__note">{note}</span>}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
+    <section className="progress-workspace" aria-labelledby="progress-title">
+      <div className="progress-workspace__head">
+        <p className="eyebrow">Step 1 of 4 · Running</p>
+        <h2 id="progress-title">Analyzing your resume</h2>
+        <p>
+          Two steps are read by {providerName} and usually take 10 to 60 seconds each. The other two run instantly in
+          your browser.
+        </p>
+      </div>
 
-/**
- * An auth failure is the one error with a single obvious next step, so it gets
- * a link rather than only prose. Everything else shows the described message
- * and its hint -- never a raw error object.
- */
-function ErrorPanel({ error, onDismiss }) {
-  return (
-    <div className="notice notice--error" role="alert">
-      <p>
-        <strong>{error.isAuth ? 'Provider rejected your key' : 'That run did not finish'}</strong>
-      </p>
-      <p>{error.message}</p>
-      {error.hint && <p className="muted">{error.hint}</p>}
-      <p>
-        {error.isAuth && (
-          <>
-            <Link to="/settings">Open Settings</Link>
-            {' · '}
-          </>
-        )}
-        <button type="button" className="link" onClick={onDismiss}>
-          Dismiss
+      <ol className="stages" aria-live="polite">
+        {PIPELINE_STAGES.map((s, i) => {
+          const copy = STAGE_COPY[s.id] ?? { icon: 'clock', working: 'Working…', ai: false };
+          const stateName =
+            currentIndex === -1 ? 'pending' : i < currentIndex ? 'done' : i === currentIndex ? 'active' : 'pending';
+          return (
+            <li key={s.id} className={`stage stage--${stateName}`}>
+              <span className="stage__marker" aria-hidden="true">
+                <Icon name={stateName === 'done' ? 'check' : copy.icon} size={stateName === 'done' ? 16 : 17} />
+              </span>
+              <span className="stage__text">
+                <span className="stage__label">{s.label}</span>
+                <span className="stage__detail">
+                  {stateName === 'active' ? copy.working : copy.ai ? `With ${providerName}` : 'In your browser'}
+                </span>
+                {stateName === 'active' && note && <span className="stage__note">{note}</span>}
+              </span>
+              <span className="stage__status">
+                {stateName === 'done' ? 'Done' : stateName === 'active' ? 'In progress' : 'Waiting'}
+              </span>
+              {stateName === 'active' && <span className="progress-bar stage__bar" aria-hidden="true" />}
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="progress-workspace__foot">
+        <span role="timer" aria-live="off">
+          {elapsed}s elapsed. You will land on the results when it finishes.
+        </span>
+        <button type="button" className="button" onClick={onCancel}>
+          Cancel
         </button>
-      </p>
-    </div>
+      </div>
+    </section>
   );
 }

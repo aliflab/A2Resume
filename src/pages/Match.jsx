@@ -18,6 +18,11 @@ import {
 } from '../services/matchRunner.js';
 import { describeError } from '../utils/errorMessages.js';
 import KeywordCoverage from '../components/analysis/KeywordCoverage.jsx';
+import Icon from '../components/Icon.jsx';
+import ErrorNotice from '../components/ui/ErrorNotice.jsx';
+import PageHeader from '../components/ui/PageHeader.jsx';
+import ScoreRing from '../components/ui/ScoreRing.jsx';
+import { gradeTone } from '../components/ui/scoreBands.js';
 
 /**
  * Match: one resume against several postings, ranked.
@@ -193,14 +198,22 @@ export default function Match() {
   };
 
   return (
-    <section className="page match">
-      <header className="match__head">
-        <h1>Match against several jobs</h1>
-        <p className="muted">
-          Scores your resume against each posting you add and ranks them, using the same scoring as step 2. Nothing
-          here changes your resume.
-        </p>
-      </header>
+    <section className="page page--wide match">
+      <PageHeader
+        eyebrow="Tools · Job Match"
+        title="Job Match"
+        actions={
+          !full && (
+            <a href="#match-add" className="button button--primary">
+              <Icon name="plus" size={16} />
+              Add job
+            </a>
+          )
+        }
+      >
+        Compare your resume against multiple opportunities. Each posting is scored with the same rules as step 2, and
+        nothing here changes your resume.
+      </PageHeader>
 
       {!resume ? (
         <div className="notice notice--info" role="status">
@@ -210,288 +223,296 @@ export default function Match() {
           </p>
         </div>
       ) : (
-        <div className={`notice ${resumeSource === 'tailored' ? 'notice--ok' : 'notice--info'}`} role="status">
-          <p>
-            {resumeSource === 'tailored'
-              ? 'Matching with your tailored resume from step 3, hand edits included.'
-              : 'Matching with your resume as it was read in step 1. You have not run the tailoring pass.'}
-          </p>
-        </div>
+        <p className={`context-line${resumeSource === 'tailored' ? ' context-line--ok' : ''}`} role="status">
+          <Icon name={resumeSource === 'tailored' ? 'checkCircle' : 'info'} size={16} />
+          {resumeSource === 'tailored'
+            ? 'Matching with your tailored resume from step 3, hand edits included.'
+            : 'Matching with your resume as it was read in step 1. You have not run the tailoring pass.'}
+        </p>
       )}
 
       {stale === true && <StaleBanner count={results.length} onRerun={run} running={running} canRun={Boolean(resume) && hasKey} />}
 
-      {/* ---------------------------------------------------------------- */}
-      <section className="card">
-        <h2>Job postings</h2>
-        <p className="muted">
-          Up to {MAX_POSTINGS}. Each one is a separate, paid AI call when you run the match &mdash; they are parsed
-          one at a time on your own API key, so a batch of {MAX_POSTINGS} is {MAX_POSTINGS} calls, not one.
-        </p>
-
-        {postings.length > 0 && (
-          <ul className="match__postings">
-            {postings.map((posting, index) => {
-              const status = statusOf(posting);
-              return (
-                <li key={posting.id} className="match__posting">
-                  <div className="match__posting-main">
-                    <label className="field-label" htmlFor={`match-label-${posting.id}`}>
-                      Name for this posting <span className="muted">(optional)</span>
-                    </label>
-                    <input
-                      id={`match-label-${posting.id}`}
-                      type="text"
-                      value={posting.label}
-                      placeholder={describePosting({ ...posting, label: '' }, null, index)}
-                      onChange={(e) => relabel(posting.id, e.target.value)}
-                      disabled={running}
-                    />
-                    <p className="muted match__posting-meta">
-                      {posting.source === 'url' ? 'Fetched' : 'Pasted'} &middot;{' '}
-                      {posting.text.trim().length.toLocaleString()} characters
-                      {posting.url && (
-                        <>
-                          {' '}
-                          &middot;{' '}
-                          <a href={posting.url} target="_blank" rel="noreferrer noopener">
-                            source
-                          </a>
-                        </>
-                      )}
-                      {!isRunnablePosting(posting) && <strong> &middot; empty, it will be skipped</strong>}
-                    </p>
-                  </div>
-                  <div className="match__posting-side">
-                    {status && <span className={`match__status match__status--${status}`}>{STATUS_LABEL[status]}</span>}
+      <div className="workspace workspace--aside">
+        <div className="stack">
+          {/* ---------------------------------------------------------------- */}
+          {batch && results.length > 0 && (
+            <section className="card">
+              <div className="match__results-head">
+                <h2>
+                  Ranked results <span className="muted">({results.length})</span>
+                </h2>
+                {confirmingClear ? (
+                  <span className="match__confirm">
+                    <span>Clear all {results.length} results? Your postings are kept.</span>
                     <button
                       type="button"
-                      className="button button--danger"
-                      onClick={() => removePosting(posting.id)}
-                      disabled={running}
-                      aria-label={`Remove posting ${index + 1}`}
+                      className="button button--sm button--danger-solid"
+                      onClick={() => {
+                        dispatch({ type: ACTIONS.CLEAR_MATCH_RESULTS });
+                        setConfirmingClear(false);
+                      }}
                     >
-                      Remove
+                      Yes, clear them
                     </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                    <button type="button" className="button button--sm" onClick={() => setConfirmingClear(false)}>
+                      Keep them
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" className="button button--sm button--ghost" onClick={() => setConfirmingClear(true)} disabled={running}>
+                    Clear all results
+                  </button>
+                )}
+              </div>
 
-        {full ? (
-          <p className="inline-status inline-status--warn" role="status">
-            That is {MAX_POSTINGS} postings, the most one batch holds. Remove one to add another.
-          </p>
-        ) : (
-          <fieldset className="match__add" disabled={running}>
-            <legend className="field-label">Add a posting</legend>
-
-            <label className="field-label" htmlFor="match-url">
-              Fetch from a URL <span className="muted">(optional)</span>
-            </label>
-            <div className="row">
-              <input
-                id="match-url"
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://jobs.example.com/postings/12345"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    fetchUrl();
-                  }
-                }}
-              />
-              <button type="button" onClick={fetchUrl} disabled={urlBusy || !url.trim()}>
-                {urlBusy ? 'Fetching...' : 'Fetch'}
-              </button>
-            </div>
-            <p className="muted">
-              Fetching goes through public proxies and fails on some boards &mdash; LinkedIn, Indeed and Glassdoor
-              block it outright. Pasting the text always works.
-            </p>
-
-            {urlNotice && (
-              <p
-                className={`inline-status inline-status--${urlNotice.tone === 'ok' ? 'ok' : 'error'}`}
-                role="status"
-              >
-                {urlNotice.message}
-                {urlNotice.hint && <> {urlNotice.hint}</>}
+              <p className="muted">
+                Highest first, ranked by percentage rather than raw points &mdash; a posting whose resume could not be
+                measured on every criterion is scored out of less than 100, so the percentages are what compare
+                fairly. Read with {batch.provider ? `${PROVIDER_LABELS[batch.provider] ?? batch.provider}, ` : ''}
+                {new Date(batch.ranAt).toLocaleString()}.
+                {batch.failed > 0 && ` ${batch.failed} posting${batch.failed === 1 ? '' : 's'} could not be read.`}
               </p>
-            )}
 
-            <label className="field-label" htmlFor="match-paste-label">
-              Name for this posting <span className="muted">(optional)</span>
-            </label>
-            <input
-              id="match-paste-label"
-              type="text"
-              value={pasteLabel}
-              onChange={(e) => setPasteLabel(e.target.value)}
-              placeholder="Leave blank to use the job title once it is parsed"
-            />
+              <ol className="match__results">
+                {results.map((row, rank) => (
+                  <MatchRow
+                    key={row.id}
+                    row={row}
+                    rank={rank}
+                    onRemove={() => dispatch({ type: ACTIONS.REMOVE_MATCH_RESULT, payload: { id: row.id } })}
+                    disabled={running}
+                  />
+                ))}
+              </ol>
+            </section>
+          )}
 
-            <label className="field-label" htmlFor="match-paste">
-              Job description text
-            </label>
-            <textarea
-              id="match-paste"
-              rows={8}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder="Paste the posting here, or fetch it above and check what came back."
-            />
-            <p className="actions">
-              <button
-                type="button"
-                className="button button--primary"
-                onClick={urlNotice?.keepUrl ? addFetched : addPaste}
-                disabled={!pasteText.trim()}
-              >
-                Add posting{postings.length > 0 ? ` (${postings.length + 1} of ${MAX_POSTINGS})` : ''}
-              </button>
-            </p>
-          </fieldset>
-        )}
-      </section>
-
-      {/* ---------------------------------------------------------------- */}
-      <section className="card">
-        <h2>{batch ? 'Run it again' : 'Run the match'}</h2>
-
-        {runnable.length === 0 ? (
-          <p className="muted">Add at least one posting with some text.</p>
-        ) : (
-          <>
-            {/* THE COST IS STATED WHENEVER THERE IS A BATCH TO PRICE, not only
-                when it can be run. Found in browser testing: with no key stored
-                this whole block was replaced by "add a key in Settings", so the
-                one place that names the actual number of calls disappeared for
-                exactly the user who has not committed to paying for any yet.
-                Someone deciding whether to add a key should be able to see what
-                a run would cost. The blockers below are additional, not a
-                substitute. */}
-            <div className="notice notice--warn" role="status">
-              <p>
-                <strong>
-                  This makes {runnable.length} separate AI call{runnable.length === 1 ? '' : 's'} on your own API key
-                  {provider ? ` (${PROVIDER_LABELS[provider] ?? provider})` : ''}.
-                </strong>{' '}
-                One per posting, run one at a time, each billed to you. Scoring itself is free and local &mdash; only
-                reading the postings costs anything.
+          {/* ---------------------------------------------------------------- */}
+          <section className="card" id="match-add">
+            {full ? (
+              <p className="inline-status inline-status--warn" role="status">
+                That is {MAX_POSTINGS} postings, the most one batch holds. Remove one to add another.
               </p>
-              {batch && (
+            ) : (
+              <fieldset className="match__add" disabled={running}>
+                <legend className="card__title">Add a job</legend>
                 <p className="muted">
-                  This replaces the {results.length} result{results.length === 1 ? '' : 's'} below and pays for every
-                  posting again, including the ones that already scored.
+                  Paste the posting, or fetch it from its URL and check what came back. Up to {MAX_POSTINGS} per batch.
                 </p>
-              )}
-            </div>
 
-            {!resume ? (
-              <p className="inline-status inline-status--error">
-                Scoring needs a resume. <Link to="/input">Run step 1</Link> first.
-              </p>
-            ) : !provider || !hasKey ? (
-              <p className="inline-status inline-status--error">
-                This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
-              </p>
-            ) : (
-              <p className="actions">
-                <button type="button" className="button button--primary" onClick={run} disabled={running}>
-                  {running
-                    ? `Reading posting ${Math.min((progress?.index ?? 0) + 1, runnable.length)} of ${runnable.length}...`
-                    : `Match ${runnable.length} posting${runnable.length === 1 ? '' : 's'}`}
-                </button>
-              </p>
+                <label className="field-label" htmlFor="match-url">
+                  Job posting URL <span className="muted">(optional)</span>
+                </label>
+                <div className="row">
+                  <input
+                    id="match-url"
+                    type="url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://jobs.example.com/postings/12345"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        fetchUrl();
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={fetchUrl} disabled={urlBusy || !url.trim()}>
+                    {urlBusy ? 'Fetching...' : 'Fetch'}
+                  </button>
+                </div>
+                <p className="field-hint">
+                  Fetching goes through public proxies and fails on some boards &mdash; LinkedIn, Indeed and Glassdoor
+                  block it outright. Pasting the text always works.
+                </p>
+
+                {urlNotice &&
+                  (urlNotice.tone === 'ok' ? (
+                    <p className="inline-status inline-status--ok" role="status">
+                      {urlNotice.message}
+                    </p>
+                  ) : (
+                    <ErrorNotice compact error={{ message: urlNotice.message, hint: urlNotice.hint, kind: 'scrape' }} />
+                  ))}
+
+                <label className="field-label" htmlFor="match-paste-label">
+                  Name for this posting <span className="muted">(optional)</span>
+                </label>
+                <input
+                  id="match-paste-label"
+                  type="text"
+                  value={pasteLabel}
+                  onChange={(e) => setPasteLabel(e.target.value)}
+                  placeholder="Leave blank to use the job title once it is parsed"
+                />
+
+                <label className="field-label" htmlFor="match-paste">
+                  Job description text
+                </label>
+                <textarea
+                  id="match-paste"
+                  className="textarea--source"
+                  rows={8}
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  placeholder="Paste the posting here, or fetch it above and check what came back."
+                />
+                <p className="actions">
+                  <button
+                    type="button"
+                    className="button button--primary"
+                    onClick={urlNotice?.keepUrl ? addFetched : addPaste}
+                    disabled={!pasteText.trim()}
+                  >
+                    Add posting{postings.length > 0 ? ` (${postings.length + 1} of ${MAX_POSTINGS})` : ''}
+                  </button>
+                </p>
+              </fieldset>
             )}
-          </>
-        )}
+          </section>
+        </div>
 
-        {runError && (
-          <p className="inline-status inline-status--error" role="alert">
-            {runError.message} {runError.isAuth && <Link to="/settings">Open Settings</Link>}
-          </p>
-        )}
-      </section>
-
-      {/* ---------------------------------------------------------------- */}
-      {batch && results.length > 0 && (
-        <section className="card">
-          <div className="match__results-head">
+        {/* ---------------------------------------------------------------- */}
+        <aside className="aside" aria-label="Your jobs and the run">
+          <section className="card">
             <h2>
-              Ranked results <span className="muted">({results.length})</span>
+              Your jobs <span className="muted">({postings.length})</span>
             </h2>
-            {confirmingClear ? (
-              <span className="match__confirm">
-                <span>Clear all {results.length} results? Your postings are kept.</span>
-                <button
-                  type="button"
-                  className="button button--danger"
-                  onClick={() => {
-                    dispatch({ type: ACTIONS.CLEAR_MATCH_RESULTS });
-                    setConfirmingClear(false);
-                  }}
-                >
-                  Yes, clear them
-                </button>
-                <button type="button" className="button" onClick={() => setConfirmingClear(false)}>
-                  Keep them
-                </button>
-              </span>
+            {postings.length === 0 ? (
+              <p className="muted">No jobs yet. Add one or more postings to compare them side by side.</p>
             ) : (
-              <button type="button" className="button" onClick={() => setConfirmingClear(true)} disabled={running}>
-                Clear all results
-              </button>
+              <ul className="match__postings">
+                {postings.map((posting, index) => {
+                  const status = statusOf(posting);
+                  return (
+                    <li key={posting.id} className="match__posting">
+                      <div className="match__posting-main">
+                        <label className="field-label" htmlFor={`match-label-${posting.id}`}>
+                          Name <span className="muted">(optional)</span>
+                        </label>
+                        <input
+                          id={`match-label-${posting.id}`}
+                          type="text"
+                          value={posting.label}
+                          placeholder={describePosting({ ...posting, label: '' }, null, index)}
+                          onChange={(e) => relabel(posting.id, e.target.value)}
+                          disabled={running}
+                        />
+                        <p className="muted match__posting-meta">
+                          {posting.source === 'url' ? 'Fetched' : 'Pasted'} &middot;{' '}
+                          {posting.text.trim().length.toLocaleString()} characters
+                          {posting.url && (
+                            <>
+                              {' '}
+                              &middot;{' '}
+                              <a href={posting.url} target="_blank" rel="noreferrer noopener">
+                                source
+                              </a>
+                            </>
+                          )}
+                          {!isRunnablePosting(posting) && <strong> &middot; empty, it will be skipped</strong>}
+                        </p>
+                      </div>
+                      <div className="match__posting-side">
+                        {status && <span className={`match__status match__status--${status}`}>{STATUS_LABEL[status]}</span>}
+                        <button
+                          type="button"
+                          className="button button--sm button--danger"
+                          onClick={() => removePosting(posting.id)}
+                          disabled={running}
+                          aria-label={`Remove posting ${index + 1}`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
-          </div>
+          </section>
 
-          <p className="muted">
-            Highest first, ranked by percentage rather than raw points &mdash; a posting whose resume could not be
-            measured on every criterion is scored out of less than 100, so the percentages are what compare fairly.
-            Read with {batch.provider ? `${PROVIDER_LABELS[batch.provider] ?? batch.provider}, ` : ''}
-            {new Date(batch.ranAt).toLocaleString()}.
-            {batch.failed > 0 && ` ${batch.failed} posting${batch.failed === 1 ? '' : 's'} could not be read.`}
-          </p>
+          <section className="card">
+            <h2>{batch ? 'Run it again' : 'Run the match'}</h2>
 
-          <ol className="match__results">
-            {results.map((row, rank) => (
-              <MatchRow
-                key={row.id}
-                row={row}
-                rank={rank}
-                onRemove={() => dispatch({ type: ACTIONS.REMOVE_MATCH_RESULT, payload: { id: row.id } })}
-                disabled={running}
-              />
-            ))}
-          </ol>
-        </section>
-      )}
+            {runnable.length === 0 ? (
+              <p className="muted">Add at least one posting with some text.</p>
+            ) : (
+              <>
+                {/* THE COST IS STATED WHENEVER THERE IS A BATCH TO PRICE, not only
+                    when it can be run. Found in browser testing: with no key stored
+                    this whole block was replaced by "add a key in Settings", so the
+                    one place that names the actual number of calls disappeared for
+                    exactly the user who has not committed to paying for any yet.
+                    Someone deciding whether to add a key should be able to see what
+                    a run would cost. The blockers below are additional, not a
+                    substitute. */}
+                <div className="notice notice--warn" role="status">
+                  <p>
+                    <strong>
+                      This makes {runnable.length} separate AI call{runnable.length === 1 ? '' : 's'} on your own API key
+                      {provider ? ` (${PROVIDER_LABELS[provider] ?? provider})` : ''}.
+                    </strong>{' '}
+                    One per posting, run one at a time, each billed to you. Scoring itself is free and local &mdash; only
+                    reading the postings costs anything.
+                  </p>
+                  {batch && (
+                    <p className="muted">
+                      This replaces the {results.length} result{results.length === 1 ? '' : 's'} and pays for every
+                      posting again, including the ones that already scored.
+                    </p>
+                  )}
+                </div>
+
+                {!resume ? (
+                  <p className="inline-status inline-status--error">
+                    Scoring needs a resume. <Link to="/input">Run step 1</Link> first.
+                  </p>
+                ) : !provider || !hasKey ? (
+                  <p className="inline-status inline-status--error">
+                    This needs an AI provider. <Link to="/settings">Add a key in Settings</Link>.
+                  </p>
+                ) : (
+                  <>
+                    <p className="actions">
+                      <button type="button" className="button button--primary button--block" onClick={run} disabled={running}>
+                        {running
+                          ? `Reading posting ${Math.min((progress?.index ?? 0) + 1, runnable.length)} of ${runnable.length}...`
+                          : `Match ${runnable.length} posting${runnable.length === 1 ? '' : 's'}`}
+                      </button>
+                    </p>
+                    {running && <span className="progress-bar" aria-hidden="true" style={{ display: 'block', marginTop: 'var(--space-3)' }} />}
+                  </>
+                )}
+              </>
+            )}
+
+            {runError && <ErrorNotice compact error={runError} />}
+          </section>
+        </aside>
+      </div>
     </section>
   );
 }
 
 const STATUS_LABEL = { pending: 'Waiting', running: 'Reading...', done: 'Done', failed: 'Failed' };
 
-const band = (pct) => (pct >= 75 ? 'good' : pct >= 45 ? 'mid' : 'poor');
-
 /**
  * One result. Collapsed it is the ranking line; expanded it is the same
  * matched / partial / missing breakdown Analyze renders, from the same
  * component -- see KeywordCoverage for why that is shared rather than copied.
+ * The top-ranked row is drawn a little stronger; nothing else is.
  */
 function MatchRow({ row, rank, onRemove, disabled }) {
   const [open, setOpen] = useState(false);
   const failed = row.error !== null && row.error !== undefined;
   const score = row.score;
   const topMissing = topMissingKeywords(row.gap, 3);
+  const top = rank === 0 && !failed && score && gradeTone(score) === 'good';
 
   return (
-    <li className={`match__row${failed ? ' match__row--failed' : ''}`}>
+    <li className={`match__row${failed ? ' match__row--failed' : ''}${top ? ' match__row--top' : ''}`}>
       <div className="match__row-head">
         <span className="match__rank">{failed ? '—' : rank + 1}</span>
 
@@ -534,25 +555,29 @@ function MatchRow({ row, rank, onRemove, disabled }) {
         </div>
 
         {!failed && score && (
-          <div className={`match__score match__score--${band(score.percentage)}`}>
-            <strong className="match__score-grade">{score.grade}</strong>
-            <span className="match__score-pct">{score.percentage}%</span>
-            <span className="muted match__score-total">
-              {score.total} / {score.scoreableMax}
-              {score.isFallback && <> &middot; partial</>}
+          <div className={`match__score match__score--${gradeTone(score)}`}>
+            <ScoreRing percentage={score.percentage} size={46} tone={gradeTone(score)}>
+              <strong className="match__score-grade">{score.grade}</strong>
+            </ScoreRing>
+            <span className="match__score-text">
+              <span className="match__score-pct">{score.percentage}%</span>
+              <span className="muted match__score-total">
+                {score.total} / {score.scoreableMax}
+                {score.isFallback && <> &middot; partial</>}
+              </span>
             </span>
           </div>
         )}
 
         <div className="match__row-side">
           {!failed && (
-            <button type="button" className="button" onClick={() => setOpen(!open)} aria-expanded={open}>
+            <button type="button" className="button button--sm" onClick={() => setOpen(!open)} aria-expanded={open}>
               {open ? 'Hide detail' : 'Detail'}
             </button>
           )}
           <button
             type="button"
-            className="button button--danger"
+            className="button button--sm button--danger"
             onClick={onRemove}
             disabled={disabled}
             aria-label={`Remove result for ${row.label}`}

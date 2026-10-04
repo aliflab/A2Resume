@@ -11,28 +11,32 @@ import {
 } from './services/sessionPersistence.js';
 
 // Three tiers, and the header draws them differently on purpose:
-// - STEPS, the wizard most visits walk through in order. Numbered, connected,
-//   and the most prominent thing in the header.
-// - TOOLS, side pages that work on the same resume but are not a step. Lighter
-//   weight, grouped under their own label.
-// - Settings, which configures the app rather than working on a resume. It
-//   sits at the far end with Start over, the other app-level control.
+// - STEPS, the wizard most visits walk through in order. A connected track in
+//   the centre, and the most prominent thing in the header.
+// - TOOLS, side pages that work on the same resume but are not a step. Quieter,
+//   grouped under their own label on the right.
+// - Settings and Start over, which act on the app rather than on a resume.
 // Nothing here guards anything -- every page must survive being opened
 // directly with empty state. The paths are the routes in router.jsx.
+//
+// `done` reads whether the artefact a step produces exists. It only changes
+// how a step looks (a check instead of its number); no step is ever disabled.
+// Export produces nothing stored, so it is never shown as done.
 const STEPS = [
-  { to: '/input', label: 'Input' },
-  { to: '/analyze', label: 'Analyze' },
-  { to: '/tailor', label: 'Tailor' },
-  { to: '/export', label: 'Export' },
+  { to: '/input', label: 'Input', done: (s) => Boolean(s.resume && s.parsedJD) },
+  { to: '/analyze', label: 'Analyze', done: (s) => Boolean(s.atsScore) },
+  { to: '/tailor', label: 'Tailor', done: (s) => Boolean(s.tailoredResume) },
+  { to: '/export', label: 'Export', done: () => false },
 ];
 
 const TOOLS = [
-  { to: '/match', label: 'Match' },
-  { to: '/cover-letter', label: 'Cover Letter' },
-  { to: '/designer', label: 'Designer' },
+  { to: '/match', label: 'Match', icon: 'target' },
+  { to: '/cover-letter', label: 'Cover Letter', icon: 'mail' },
+  { to: '/designer', label: 'Designer', icon: 'palette' },
 ];
 
 export default function App() {
+  const { state } = useApp();
   // Bumped by "Start over" and used as the routed page's key. Emptying the
   // store is not enough on its own: the page on screen seeded its local form
   // state from the store on mount (InputPage's textareas), and navigating to
@@ -43,72 +47,83 @@ export default function App() {
 
   return (
     <div className="shell">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="shell__header">
-        <NavLink to="/" className="shell__brand" end>
-          <span className="shell__logo">
-            <Icon name="logo" size={16} />
-          </span>
-          A2Resume
-        </NavLink>
+        <div className="shell__bar">
+          <NavLink to="/" className="shell__brand" end aria-label="A2Resume, home">
+            <span className="shell__logo">
+              <Icon name="logo" size={15} />
+            </span>
+            <span className="shell__wordmark">A2Resume</span>
+          </NavLink>
 
-        <div className="shell__navs">
           <nav className="steps-nav" aria-label="Resume steps">
             <ol>
-              {STEPS.map(({ to, label }, i) => (
-                <li key={to}>
-                  <NavLink to={to} className="steps-nav__link">
-                    <span className="steps-nav__num" aria-hidden="true">
-                      {i + 1}
-                    </span>
-                    <span className="visually-hidden">Step {i + 1}: </span>
-                    {label}
-                  </NavLink>
-                </li>
-              ))}
+              {STEPS.map(({ to, label, done }, i) => {
+                const complete = done(state);
+                return (
+                  <li key={to} className={complete ? 'is-complete' : undefined}>
+                    <NavLink to={to} className="steps-nav__link">
+                      <span className="steps-nav__num" aria-hidden="true">
+                        {complete ? <Icon name="check" size={12} /> : i + 1}
+                      </span>
+                      <span className="visually-hidden">Step {i + 1}: </span>
+                      <span className="steps-nav__label">{label}</span>
+                      {complete && <span className="visually-hidden"> (done)</span>}
+                    </NavLink>
+                  </li>
+                );
+              })}
             </ol>
           </nav>
 
-          <nav className="tools-nav" aria-labelledby="tools-nav-label">
-            <span id="tools-nav-label" className="tools-nav__label">
-              Tools
-            </span>
-            {TOOLS.map(({ to, label }) => (
-              <NavLink key={to} to={to} className="tools-nav__link">
-                {label}
-              </NavLink>
-            ))}
-          </nav>
-        </div>
+          <div className="shell__right">
+            <nav className="tools-nav" aria-labelledby="tools-nav-label">
+              <span id="tools-nav-label" className="tools-nav__label">
+                Tools
+              </span>
+              {TOOLS.map(({ to, label, icon }) => (
+                <NavLink key={to} to={to} className="tools-nav__link">
+                  <Icon name={icon} size={15} />
+                  {label}
+                </NavLink>
+              ))}
+            </nav>
 
-        <div className="shell__utility">
-          <NavLink to="/settings" className="shell__settings">
-            <Icon name="settings" size={16} />
-            Settings
-          </NavLink>
-          <SessionControls onReset={() => setResetCount((n) => n + 1)} />
+            <span className="shell__divider" aria-hidden="true" />
+
+            <NavLink to="/settings" className="shell__settings">
+              <Icon name="settings" size={16} />
+              <span className="shell__settings-label">Settings</span>
+            </NavLink>
+            <SessionControls onReset={() => setResetCount((n) => n + 1)} />
+          </div>
         </div>
       </header>
 
-      <main className="shell__main">
-        {/* Inside a .page box, so it sits in the same column as the page below it. */}
-        <div className="page">
+      <main className="shell__main" id="main">
+        <div className="page session-notice-slot">
           <SessionNotice />
         </div>
         <Outlet key={resetCount} />
       </main>
 
       <footer className="shell__footer">
-        <p className="shell__footer-note">
-          <Icon name="lock" size={14} />
-          {/* "Never leaves this device" was not true once an analysis runs:
-              the resume goes to the provider the user picked. Input says so,
-              and this line now agrees with it. */}
-          <span>
-            Runs entirely in your browser. Your data is stored only on this device, and is sent only to the AI
-            provider you choose.
-          </span>
-        </p>
-        <p className="shell__footer-meta">No account · No server · Your own API key</p>
+        <div className="shell__footer-inner">
+          <p className="shell__footer-note">
+            <Icon name="lock" size={14} />
+            {/* "Never leaves this device" is not true once an analysis runs:
+                the resume goes to the provider the user picked. Input says so,
+                and this line agrees with it. */}
+            <span>
+              Runs entirely in your browser. Your data is stored only on this device, and is sent only to the AI
+              provider you choose.
+            </span>
+          </p>
+          <p className="shell__footer-meta">No account · No server · Your own API key</p>
+        </div>
       </footer>
     </div>
   );
@@ -150,19 +165,19 @@ function SessionControls({ onReset }) {
       )}
 
       {confirming ? (
-        <>
+        <div className="shell__confirm" role="group" aria-label="Confirm start over">
           <span className="shell__session-prompt">Clear your resume, job and results? API keys stay.</span>
-          <button type="button" className="button button--danger" onClick={startOver}>
+          <button type="button" className="button button--sm button--danger-solid" onClick={startOver}>
             Yes, start over
           </button>
-          <button type="button" className="button" onClick={() => setConfirming(false)}>
+          <button type="button" className="button button--sm" onClick={() => setConfirming(false)}>
             Cancel
           </button>
-        </>
+        </div>
       ) : (
         <button
           type="button"
-          className="button"
+          className="button button--sm button--danger"
           onClick={() => setConfirming(true)}
           disabled={!hasData || running}
           title={running ? 'Wait for the analysis to finish' : hasData ? undefined : 'Nothing to clear'}
@@ -209,7 +224,7 @@ function SessionNotice() {
           Your API keys are not affected. Start again from <Link to="/input">step 1</Link>.
         </p>
         <p>
-          <button type="button" className="button" onClick={dismiss}>
+          <button type="button" className="button button--sm" onClick={dismiss}>
             Dismiss
           </button>
         </p>

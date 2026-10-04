@@ -40,13 +40,45 @@ export default function KeywordCoverage({ gap, title = 'Keyword coverage', idPre
 
   const total = gap.totalKeywords ?? 0;
 
+  const counts = buckets.map((b) => b.items.length);
+  const counted = counts.reduce((a, b) => a + b, 0) || 1;
+
   return (
     <>
-      {title && <h2>{title}</h2>}
-      <p className="muted">
-        {total} keyword{total === 1 ? '' : 's'} from the job description · {gap.matchRate}% covered
-        {typeof gap.weightedMatchRate === 'number' && ` · ${gap.weightedMatchRate}% weighted by priority`}
+      {title && (
+        <div className="section-head">
+          <div>
+            <h2>{title}</h2>
+            <p className="muted">Click a keyword to see how often it appears in your resume.</p>
+          </div>
+        </div>
+      )}
+      <p className="coverage-summary">
+        <span>
+          <strong>{total}</strong> keyword{total === 1 ? '' : 's'} from the job description
+        </span>
+        <span>
+          <strong>{gap.matchRate}%</strong> covered
+        </span>
+        {typeof gap.weightedMatchRate === 'number' && (
+          <span>
+            <strong>{gap.weightedMatchRate}%</strong> weighted by priority
+          </span>
+        )}
       </p>
+      {total > 0 && (
+        <div
+          className="coverage-bar"
+          role="img"
+          aria-label={`${counts[0]} matched, ${counts[1]} partial, ${counts[2]} missing`}
+        >
+          {buckets.map((b, i) =>
+            counts[i] > 0 ? (
+              <span key={b.id} className={`coverage-bar__${b.tone}`} style={{ width: `${(counts[i] / counted) * 100}%` }} />
+            ) : null
+          )}
+        </div>
+      )}
 
       {total === 0 ? (
         <p className="muted">
@@ -55,7 +87,7 @@ export default function KeywordCoverage({ gap, title = 'Keyword coverage', idPre
       ) : (
         <div className="buckets">
           {buckets.map((b) => (
-            <div key={b.id} className="bucket">
+            <div key={b.id} className={`bucket bucket--${b.id}`}>
               <h3 className={`bucket__title bucket__title--${b.tone}`}>
                 {b.label} <span className="muted">({b.items.length})</span>
               </h3>
