@@ -3774,6 +3774,13 @@ fieldset.card {
   padding: 0 var(--space-6);
 }
 
+/* The card itself has no padding (blocks run edge to edge), so any loose text
+   in it has to carry the same inset as the heading, or it sits on the border. */
+.editor-card__empty {
+  margin: var(--space-2) 0 var(--space-4);
+  padding: 0 var(--space-6);
+}
+
 .editor-card > .notice,
 .editor-recovered {
   margin: var(--space-3) var(--space-6);

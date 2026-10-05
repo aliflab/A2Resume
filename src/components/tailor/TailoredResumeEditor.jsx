@@ -220,7 +220,9 @@ function EntrySection({ section, entries, save, add, removeEntry, draftOf, Form,
     <section className="card editor-card">
       <h2>{SECTION_LABELS[section]}</h2>
       {entries.length === 0 ? (
-        <p className="muted">Your resume has no {SECTION_LABELS[section].toLowerCase()} entries.</p>
+        <p className="muted editor-card__empty">
+          Your resume has no {SECTION_LABELS[section].toLowerCase()} entries.
+        </p>
       ) : (
         entries.map((entry, index) => (
           <EditableBlock
