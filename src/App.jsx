@@ -2,6 +2,7 @@ import { useState, useSyncExternalStore } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router';
 
 import Icon from './components/Icon.jsx';
+import ThemeToggle from './components/ThemeToggle.jsx';
 import { ACTIONS, useApp } from './context/AppContext.jsx';
 import {
   describeArtefactDrift,
@@ -15,7 +16,8 @@ import {
 //   the centre, and the most prominent thing in the header.
 // - TOOLS, side pages that work on the same resume but are not a step. Quieter,
 //   grouped under their own label on the right.
-// - Settings and Start over, which act on the app rather than on a resume.
+// - The theme toggle, Settings and Start over, which act on the app rather
+//   than on a resume.
 // Nothing here guards anything -- every page must survive being opened
 // directly with empty state. The paths are the routes in router.jsx.
 //
@@ -94,6 +96,7 @@ export default function App() {
 
             <span className="shell__divider" aria-hidden="true" />
 
+            <ThemeToggle />
             <NavLink to="/settings" className="shell__settings">
               <Icon name="settings" size={16} />
               <span className="shell__settings-label">Settings</span>

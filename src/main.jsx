@@ -4,7 +4,10 @@ import { RouterProvider } from 'react-router/dom';
 
 import { router } from './router.jsx';
 import { AppProvider } from './context/AppContext.jsx';
+import { initTheme } from './services/themeService.js';
 import './styles.css';
+
+initTheme();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
