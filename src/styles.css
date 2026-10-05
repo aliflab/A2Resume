@@ -4479,6 +4479,119 @@ fieldset.card {
   color: var(--color-primary-text);
 }
 
+/* Custom accent: the native colour well, a hex field, and the contrast. */
+.accent-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.accent-custom__well {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 2.5rem;
+  height: 2.25rem;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.accent-custom__well:focus-within {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* The input fills the well and its own chrome is pushed out of view, so the
+   well shows nothing but the colour. */
+.accent-custom__well input {
+  position: absolute;
+  inset: -0.5rem;
+  width: calc(100% + 1rem);
+  height: calc(100% + 1rem);
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.accent-custom__hex {
+  width: 7.5rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.accent-custom__ratio {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+}
+
+.designer__group > .inline-status {
+  margin-top: var(--space-3);
+}
+
+/* Imported fonts. */
+.font-library {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.font-library__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.font-library__head .field-label {
+  margin: 0;
+}
+
+.font-library__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.font-library__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.font-library__name {
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.font-library__item .button {
+  margin-left: auto;
+}
+
+.font-library .inline-status,
+.font-library .loading-line {
+  margin-top: var(--space-3);
+}
+
+.font-library__notes {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
 /* Match -------------------------------------------------------------------- */
 
 .match__postings {

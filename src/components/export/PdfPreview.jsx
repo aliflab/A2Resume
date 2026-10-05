@@ -5,7 +5,9 @@ import Icon from '../Icon.jsx';
 import Spinner from '../ui/Spinner.jsx';
 import { resumeDocumentFor } from './resumeDocuments.js';
 import CoverLetterDocument from './CoverLetterDocument.jsx';
+import { registerCustomFont } from './customFonts.jsx';
 import { resolveResumeTheme } from './resumeDesign.js';
+import { isCustomFontId } from '../../services/fontLibrary.js';
 import { templateById } from './resumeTemplates.js';
 
 /**
@@ -24,10 +26,13 @@ import { templateById } from './resumeTemplates.js';
  * from resumeTemplates.js) for the same reason: the id is a string, the
  * components stay on this side of the boundary.
  *
- * `accent` and `font` are Designer's choices (ids from resumeDesign.js, or
- * null for the template's own). They are resolved here against the template's
- * own default font, so a page never needs to know which family a template was
- * designed in.
+ * `accent` and `font` are Designer's choices (resolved values from
+ * resumeDesign.js, or null for the template's own). They are resolved here
+ * against the template's own default font, so a page never needs to know which
+ * family a template was designed in. An imported font (`custom:<id>`) is
+ * registered with react-pdf here, from the data URL in the font library, before
+ * the document that uses it is built; if it has been removed meanwhile, the
+ * theme falls back to the template's own font.
  *
  * The preview and the download are built from the same element. What the user
  * sees in the frame is what they get in the file. The frame sits on a canvas
@@ -36,6 +41,7 @@ import { templateById } from './resumeTemplates.js';
 const TEMPLATES = {
   resume: (data, template, accent, font) => {
     const ResumeLayout = resumeDocumentFor(template);
+    if (isCustomFontId(font)) registerCustomFont(font);
     const theme = resolveResumeTheme(templateById(template).defaultFont, { accent, font });
     return <ResumeLayout resume={data} theme={theme} />;
   },

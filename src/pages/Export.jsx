@@ -61,7 +61,11 @@ export default function Export() {
   const resume = useMemo(() => normalizeResumeForExport(raw), [raw]);
   const plainText = useMemo(() => generatePlainText(resume), [resume]);
   const fileName = useMemo(() => buildResumeFileName(resume), [resume]);
-  const unsupportedChars = useMemo(() => findUnsupportedPdfCharacters(resume), [resume]);
+  // An imported font draws whatever its file covers; the built-in ones only WinAnsi.
+  const unsupportedChars = useMemo(
+    () => findUnsupportedPdfCharacters(resume, { coverage: fontById(font)?.coverage }),
+    [resume, font],
+  );
 
   const [copyStatus, setCopyStatus] = useState(null);
 
@@ -169,9 +173,10 @@ export default function Export() {
             {unsupportedChars.map((char) => `"${char}"`).join(' ')}
           </p>
           <p>
-            Every template and every Designer font is a standard built-in PDF font (Helvetica, Times or Courier) that
-            only covers Western European characters, so these may come out wrong or missing whichever template you
-            pick. Check the preview. The plain-text copy is not affected.
+            {fontInfo?.custom
+              ? `${fontInfo.label} does not include them, and the built-in fallback only covers Western European characters, so they may come out wrong or missing whichever template you pick.`
+              : 'The built-in PDF fonts (Helvetica, Times and Courier) only cover Western European characters, so these may come out wrong or missing whichever template you pick. A font you import in Designer that includes them fixes that.'}{' '}
+            Check the preview. The plain-text copy is not affected.
           </p>
         </div>
       )}

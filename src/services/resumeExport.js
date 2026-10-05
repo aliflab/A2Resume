@@ -301,10 +301,12 @@ export function buildResumeFileName(resume, date = new Date()) {
 // ---------------------------------------------------------------------------
 
 /**
- * The PDF uses the built-in Helvetica, which covers the WinAnsi (Windows-1252)
- * character set and nothing else. A custom font would have to be bundled, and
- * the one thing it must never be is fetched from a font CDN. Rather than let
- * an unsupported character come out silently wrong, the page names it.
+ * The built-in PDF fonts (Helvetica, Times, Courier) cover the WinAnsi
+ * (Windows-1252) character set and nothing else. A font the user imported in
+ * Designer covers whatever its file covers, and react-pdf draws any character
+ * it lacks in Helvetica instead. So a character comes out wrong only when
+ * neither the chosen font nor WinAnsi has it. Rather than let it come out
+ * silently wrong, the page names it.
  */
 const WIN_ANSI_EXTRAS = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ');
 
@@ -320,18 +322,24 @@ function collectStrings(value, out) {
 }
 
 /**
- * Distinct characters in the resume that Helvetica cannot draw.
+ * Distinct characters in the resume that the PDF cannot draw.
  *
  * @param {ReturnType<typeof normalizeResumeForExport>} resume
+ * @param {{ coverage?: number[][] | null }} [font] An imported font's `[first, last]`
+ *   code point ranges (fontById(...).coverage). Omitted for a built-in font.
  * @returns {string[]}
  */
-export function findUnsupportedPdfCharacters(resume) {
+export function findUnsupportedPdfCharacters(resume, { coverage = null } = {}) {
   const strings = [];
   collectStrings(resume, strings);
+  const covered = (char) => {
+    const cp = char.codePointAt(0);
+    return Array.isArray(coverage) && coverage.some(([first, last]) => cp >= first && cp <= last);
+  };
   const unsupported = new Set();
   for (const text of strings) {
     for (const char of text) {
-      if (char !== '\n' && char !== '\t' && !isWinAnsi(char)) unsupported.add(char);
+      if (char !== '\n' && char !== '\t' && !isWinAnsi(char) && !covered(char)) unsupported.add(char);
     }
   }
   return [...unsupported];

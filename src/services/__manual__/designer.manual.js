@@ -8,6 +8,8 @@
  *   await d.testFontRoundTrips();   // 4 templates x 3 fonts x 4 fixtures, through pdfParser.js
  *   await d.testFontSweep();        // 4 templates x 3 fonts x 24 page-break offsets
  *   await d.testAccents();          // 4 templates x 7 accents: round trip + where the colour landed
+ *   // after importing a font on /designer:
+ *   await d.testImportedFontRoundTrips(); // 4 templates x 4 fixtures in that font
  *   // on /designer, with a resume loaded:
  *   await d.liveDesign();           // real clicks; preview + download link rebuilt, blob checked, stored
  *   // reload, then:
@@ -35,14 +37,19 @@ import {
   ACCENT_CHOICES,
   ACCENT_MIN_CONTRAST,
   FONT_CHOICES,
+  accentById,
   contrastRatio,
+  fontById,
+  normalizeHex,
   resolveAccentChoice,
   resolveFontChoice,
   resolveResumeTheme,
 } from '../../components/export/resumeDesign.js';
 import { RESUME_TEMPLATES, RESUME_TEMPLATE_IDS, templateById } from '../../components/export/resumeTemplates.js';
 import { extractTextFromPdf } from '../pdfParser.js';
-import { normalizeResumeForExport } from '../resumeExport.js';
+import { findUnsupportedPdfCharacters, normalizeResumeForExport } from '../resumeExport.js';
+import { customFontId, listFonts } from '../fontLibrary.js';
+import { registerCustomFont } from '../../components/export/customFonts.jsx';
 import { loadSession, saveSession } from '../sessionPersistence.js';
 import { get, remove, set } from '../storageService.js';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -82,14 +89,19 @@ export function testDesignOffline() {
   check('templates: every defaultFont is a font choice', RESUME_TEMPLATES.every((t) => FONT_CHOICES.some((f) => f.id === t.defaultFont)));
   check('templates: accentUse is known for all four', RESUME_TEMPLATES.every((t) => ['rules', 'text'].includes(t.accentUse)));
 
-  check('resolve: junk accent -> null (template own)', resolveAccentChoice('#ff0000') === null && resolveAccentChoice(42) === null);
+  check('resolve: junk accent -> null (template own)', resolveAccentChoice('red') === null && resolveAccentChoice(42) === null && resolveAccentChoice('#ff000') === null && resolveAccentChoice('url(x)') === null);
+  check('resolve: a stored custom accent is only a lowercase #rrggbb', resolveAccentChoice('#3a7bd5') === '#3a7bd5' && resolveAccentChoice('#3A7BD5') === null && resolveAccentChoice('#3a7bd5;color:red') === null);
+  check('normalizeHex: typed forms -> #rrggbb', normalizeHex('#ABC') === '#aabbcc' && normalizeHex(' 3A7BD5 ') === '#3a7bd5' && normalizeHex('#12345') === null && normalizeHex(null) === null);
   check('resolve: junk font -> null (template own)', resolveFontChoice('Comic Sans') === null && resolveFontChoice(undefined) === null);
+  check('resolve: an imported font id not in the library -> null', resolveFontChoice('custom:000000000000') === null && fontById('custom:000000000000') === null);
   check('theme: no choice = the template family, no accent', (() => {
     const t = resolveResumeTheme('times', {});
     return t.faces.regular === 'Times-Roman' && t.accent === null;
   })());
   check('theme: a font choice overrides the template family', resolveResumeTheme('times', { font: 'courier' }).faces.bold === 'Courier-Bold');
-  check('theme: an accent id resolves to its hex, never passed through raw', resolveResumeTheme('helvetica', { accent: 'navy' }).accent === '#1e3a8a' && resolveResumeTheme('helvetica', { accent: '#123456' }).accent === null);
+  check('theme: an accent id resolves to its hex', resolveResumeTheme('helvetica', { accent: 'navy' }).accent === '#1e3a8a');
+  check('theme: a custom #rrggbb passes through; anything else is dropped', resolveResumeTheme('helvetica', { accent: '#123456' }).accent === '#123456' && resolveResumeTheme('helvetica', { accent: 'red' }).accent === null);
+  check('accentById: a custom colour has a label and its own hex', accentById('#123456')?.hex === '#123456' && accentById('#123456')?.custom === true);
 
   // Persistence -- the same path as the template choice.
   const before = get('session');
@@ -120,10 +132,14 @@ export function testDesignOffline() {
 // Reading a PDF back
 // ---------------------------------------------------------------------------
 
-/** The standard-font names a PDF declares. Font dictionaries are not compressed, so this is a plain scan. */
+/**
+ * The font names a PDF declares. Font dictionaries are not compressed, so this
+ * is a plain scan. An embedded (imported) font is a subset named
+ * "ABCDEF+<PostScript name>", hence the `+` and digits.
+ */
 export async function fontsIn(blob) {
   const text = new TextDecoder('latin1').decode(new Uint8Array(await blob.arrayBuffer()));
-  return [...new Set([...text.matchAll(/\/BaseFont\s*\/([A-Za-z-]+)/g)].map((m) => m[1]))].sort();
+  return [...new Set([...text.matchAll(/\/BaseFont\s*\/([A-Za-z0-9+_-]+)/g)].map((m) => m[1]))].sort();
 }
 
 /** Every fill and stroke colour on page 1, as pdf.js reports it (hex). */
@@ -148,6 +164,43 @@ export async function coloursIn(blob) {
 // ---------------------------------------------------------------------------
 // Fonts: every template x every font x every base fixture, then the sweep
 // ---------------------------------------------------------------------------
+
+/**
+ * An IMPORTED font through the same round trip as the built-ins: every
+ * template x every fixture, read back by pdf.js. Import a font on /designer
+ * first; `fontId` defaults to the first one in the library.
+ *
+ *   await d.testImportedFontRoundTrips();
+ *
+ * Declared fonts must be the imported faces (embedded subsets, so named
+ * "ABCDEF+<PostScript name>"), plus Helvetica only where the resume has a
+ * character the imported font lacks -- react-pdf's fallback.
+ */
+export async function testImportedFontRoundTrips({ fontId, fixtures = ['sample', 'heavy', 'sparse', 'unicode'] } = {}) {
+  const meta = fontId ? listFonts().find((f) => customFontId(f.id) === fontId) : listFonts()[0];
+  if (!meta) {
+    console.log('No imported font. Import one on /designer first.');
+    return { ok: false, rows: [] };
+  }
+  const id = customFontId(meta.id);
+  registerCustomFont(id);
+  const rows = [];
+  for (const templateId of RESUME_TEMPLATE_IDS) {
+    const theme = resolveResumeTheme(templateById(templateId).defaultFont, { font: id });
+    for (const fx of fixtures) {
+      const r = await roundTrip(templateId, fx, { theme });
+      const fonts = await fontsIn(r.blob);
+      const lacking = findUnsupportedPdfCharacters(normalizeResumeForExport(FIXTURES[fx]), { coverage: meta.coverage });
+      const embedded = fonts.filter((f) => /^[A-Z]{6}\+/.test(f));
+      const other = fonts.filter((f) => !/^[A-Z]{6}\+/.test(f) && !(lacking.length > 0 && f === 'Helvetica'));
+      check(`${templateId} + ${meta.name} / ${fx}: round trip`, r.ok, r.failures);
+      check(`${templateId} + ${meta.name} / ${fx}: draws in the imported font${lacking.length ? ' (+ Helvetica for characters it lacks)' : ''}`, embedded.length > 0 && other.length === 0, fonts);
+      rows.push({ template: templateId, fixture: fx, ok: r.ok, pages: r.pages, fonts: fonts.join(' ') });
+    }
+  }
+  console.table(rows);
+  return { ok: summary(), rows };
+}
 
 export async function testFontRoundTrips({ fixtures = ['sample', 'heavy', 'sparse', 'unicode'] } = {}) {
   const rows = [];

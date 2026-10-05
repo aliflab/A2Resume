@@ -85,7 +85,7 @@ function SessionDataSection() {
           <Icon name="refresh" size={16} />
           <span>
             <strong>Start over</strong>, in the header, deletes all of it. Clearing your browser data deletes it too.
-            Start over does not remove your API keys.
+            Start over does not remove your API keys, or fonts you imported in Designer.
           </span>
         </li>
         <li>
