@@ -13,6 +13,7 @@ import {
   buildTranscriptionPromptSection,
   checkTranscriptionFidelity,
 } from '../utils/transcriptionFidelity.js';
+import { scrubLeakedFields } from '../utils/leakedOutput.js';
 
 /**
  * Resume parsing gets its own timeout rather than the shared 20s default,
@@ -199,7 +200,11 @@ Return only the json object. No prose, no commentary, no code fences.`;
  * @param {string} [options.model] Pin one model, skipping the fallback list.
  * @param {number} [options.timeoutMs]
  * @returns {Promise<{ data: object, provider: string, model: string, salvaged: boolean,
+ *   leaksRemoved: { path: string, marker: string, text: string }[],
  *   fidelityWarnings: { path: string, text: string, unsupportedWords: string[] }[] }>}
+ *   `leaksRemoved` lists fields that held the model's own working (a code
+ *   fence, a json copy of its answer, talk about its instructions) and were
+ *   emptied or dropped -- see utils/leakedOutput.js.
  *   `fidelityWarnings` is non-empty when a copied field contains words that
  *   never appear in `rawText` -- see utils/transcriptionFidelity.js. Treat it
  *   like `salvaged`: a signal the prompt did not hold, not something to ignore.
@@ -231,5 +236,9 @@ ${rawText}
   // would be unaffected, but the manual test's `collectStrings` walks every
   // value, and warning text quoting a bullet would make that bullet look
   // captured when it was not.
-  return { ...result, fidelityWarnings: checkTranscriptionFidelity(rawText, result.data) };
+  //
+  // Leaked working is different: it is never resume content, so it is removed
+  // here rather than reported, before anything downstream can store it.
+  const { resume: data, removed } = scrubLeakedFields(result.data, rawText);
+  return { ...result, data, leaksRemoved: removed, fidelityWarnings: checkTranscriptionFidelity(rawText, data) };
 }

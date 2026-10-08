@@ -148,7 +148,7 @@ export const SESSION_VERSION = 1;
  * run (CLEAR_ANALYSIS) or Start over (RESET). A session saved before versioning
  * existed has no stamp and loads as 'unversioned', i.e. older than any build.
  */
-export const ARTEFACT_VERSION = 1;
+export const ARTEFACT_VERSION = 2;
 
 /**
  * Rough per-origin localStorage budget. Browsers differ and count UTF-16 code

@@ -371,12 +371,47 @@ export function applyTailoredEdit(tailored, payload) {
  * like any other block save. That reuse is the point: validation, the no-op
  * rule, the hand-edit log and the rescore all come with it.
  *
- * Matching is exact once case and whitespace are folded. A change whose text
- * has since been rewritten in the editor above is not found, and the page says
- * so instead of guessing at a near match.
+ * The log is the model's own account of what it did, and it is not a reliable
+ * copy of what it wrote. Observed failures, every one of which an exact match
+ * turned into "no Edit button" on every item:
+ *  - the log's "after" differs from the resume in a dash, a quote, a trailing
+ *    full stop, or a reworded clause;
+ *  - the merge put the original back (`before` is what is really there);
+ *  - a skills change logs a whole category line, not one skill;
+ *  - a summary change logs a summary the model then wrote slightly differently.
+ *
+ * So lines are compared on a punctuation-blind key, then by word overlap, and
+ * `before` is tried when `after` is not found. The summary is a single field,
+ * so a summary change always finds it. Whatever is matched, the edit box opens
+ * on the text that is actually in the resume (`location.text`), never on the
+ * log's version of it, so a near match can never put the wrong words in front
+ * of the user without showing them.
  */
 
-const fold = (value) => str(value).replace(/\s+/g, ' ').toLowerCase();
+/** Case, spacing and punctuation folded away; `+` and `#` kept, so C, C++ and C# stay apart. */
+const matchKey = (value) =>
+  asString(value)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}+#]+/gu, ' ')
+    .trim();
+
+/** Word overlap (Dice) below which two lines are different lines, not two wordings of one. */
+export const CLOSE_MATCH = 0.6;
+
+/** Lines this short are only ever matched exactly: overlap means nothing on two or three words. */
+const CLOSE_MATCH_MIN_WORDS = 4;
+
+function similarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const wa = new Set(a.split(' '));
+  const wb = new Set(b.split(' '));
+  if (Math.min(wa.size, wb.size) < CLOSE_MATCH_MIN_WORDS) return 0;
+  let shared = 0;
+  for (const w of wa) if (wb.has(w)) shared += 1;
+  return (2 * shared) / (wa.size + wb.size);
+}
 
 /** The wording a change currently stands for: the user's edit of it if there is one, else the AI's. */
 export function currentChangeText(change) {
@@ -386,10 +421,10 @@ export function currentChangeText(change) {
 
 /** The model names sections freely ("Work Experience", "Profile"); map that onto the schema's keys. */
 function changeSection(name) {
-  const s = fold(name);
+  const s = matchKey(name);
   if (!s) return null;
   if (/summary|profile|objective|about/.test(s)) return 'summary';
-  if (/skill/.test(s)) return 'skills';
+  if (/skill|expertise|competenc/.test(s)) return 'skills';
   if (/project/.test(s)) return 'projects';
   if (/educat/.test(s)) return 'education';
   if (/experience|work|employment|role|job/.test(s)) return 'experience';
@@ -415,61 +450,128 @@ const CHANGE_TARGET_FIELDS = {
 function namesTarget(section, entry, target) {
   if (!target) return false;
   return CHANGE_TARGET_FIELDS[section].some((field) => {
-    const name = fold(entry[field]);
+    const name = matchKey(entry[field]);
     return name && (name.includes(target) || target.includes(name));
   });
 }
 
-function findChangeIn(tailored, section, needle, target) {
-  if (section === 'summary') {
-    return fold(tailored.summary) === needle ? { section, index: null, field: null, line: null } : null;
-  }
-  if (section === 'skills') {
-    // Searched in draft shape, so the indices are the ones changeEditPayload writes to.
-    const groups = toDraft('skills', tailored.skills);
-    for (let g = 0; g < groups.length; g += 1) {
-      const s = groups[g].skills.findIndex((skill) => fold(skill) === needle);
-      if (s >= 0) return { section, index: null, field: g, line: s };
+/**
+ * Split an edited skills line back into skills. Commas inside brackets stay,
+ * so "AWS (EC2, S3)" is one skill, and a leading "Category:" is dropped when it
+ * names the category being edited.
+ */
+export function splitSkillLine(text, category) {
+  let line = asString(text).trim();
+  const colon = line.indexOf(':');
+  if (colon > 0 && matchKey(line.slice(0, colon)) === matchKey(category)) line = line.slice(colon + 1);
+  const skills = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of line) {
+    if ('([{'.includes(ch)) depth += 1;
+    if (')]}'.includes(ch)) depth = Math.max(0, depth - 1);
+    if (depth === 0 && (ch === ',' || ch === ';' || ch === '\n')) {
+      skills.push(current);
+      current = '';
+    } else {
+      current += ch;
     }
-    return null;
   }
-  const list = asArray(tailored[section]);
-  // Entries the change names come first; a stable sort keeps the rest in order.
-  const order = list.map((_, i) => i).sort((a, b) => namesTarget(section, asObject(list[b]), target) - namesTarget(section, asObject(list[a]), target));
-  for (const index of order) {
-    const entry = asObject(list[index]);
-    for (const field of CHANGE_TEXT_FIELDS[section]) {
-      const value = entry[field];
-      if (Array.isArray(value)) {
-        const line = value.findIndex((item) => fold(item) === needle);
-        if (line >= 0) return { section, index, field, line };
-      } else if (fold(value) === needle) {
-        return { section, index, field, line: null };
+  skills.push(current);
+  return skills.map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Every line a change could stand for, in search order: the named section
+ * first and, inside a list section, the entries the change names first.
+ */
+function changeCandidates(tailored, sections, target) {
+  const out = [];
+  for (const section of sections) {
+    if (section === 'summary') {
+      if (str(tailored.summary)) out.push({ section, index: null, field: null, line: null, text: asString(tailored.summary) });
+      continue;
+    }
+    if (section === 'skills') {
+      // Draft shape, so the indices are the ones changeEditPayload writes to.
+      toDraft('skills', tailored.skills).forEach((group, g) => {
+        group.skills.forEach((skill, s) => out.push({ section, index: null, field: g, line: s, text: skill, single: true }));
+        if (group.skills.length > 1) out.push({ section, index: null, field: g, line: null, text: group.skills.join(', ') });
+      });
+      continue;
+    }
+    const list = asArray(tailored[section]);
+    const named = list.map((_, i) => i).filter((i) => namesTarget(section, asObject(list[i]), target));
+    const order = [...named, ...list.map((_, i) => i).filter((i) => !named.includes(i))];
+    for (const index of order) {
+      const entry = asObject(list[index]);
+      for (const field of CHANGE_TEXT_FIELDS[section]) {
+        const value = entry[field];
+        if (Array.isArray(value)) {
+          value.forEach((item, line) => {
+            if (str(item)) out.push({ section, index, field, line, text: asString(item) });
+          });
+        } else if (str(value)) {
+          out.push({ section, index, field, line: null, text: asString(value) });
+        }
       }
     }
+  }
+  return out;
+}
+
+/**
+ * Where a change's wording sits in the tailored resume, or null.
+ *
+ * @returns {{ section: string, index: number | null, field: string | number | null,
+ *   line: number | null, text: string, exact: boolean } | null}
+ *   For skills, `field` is the category's position and `line` the skill's, or
+ *   null for the whole category. `text` is what is in the resume there now, and
+ *   `exact` says whether that is the change's current wording.
+ */
+export function locateChange(tailored, change) {
+  if (!isPlainObject(tailored) || !isPlainObject(change)) return null;
+  const current = matchKey(currentChangeText(change));
+  // `before` only stands in for the AI's wording. Once the user has edited a
+  // change, their wording is the only thing that change can point at.
+  const hasEdit = typeof change.edited === 'string' && change.edited.trim() !== '';
+  const before = hasEdit ? '' : matchKey(change.before);
+  if (!current && !before) return null;
+
+  const named = changeSection(change.section);
+  const sections = named ? [named, ...CHANGE_SEARCH_ORDER.filter((s) => s !== named)] : CHANGE_SEARCH_ORDER;
+  const candidates = changeCandidates(tailored, sections, matchKey(change.target));
+
+  let best = null;
+  let bestScore = 0;
+  for (const candidate of candidates) {
+    const key = matchKey(candidate.text);
+    if (key === current) return { ...stripCandidate(candidate), exact: true };
+    if (candidate.single) {
+      // One skill: exact or nothing. "Go" is not a near match for "Go SDK".
+      if (key === before && bestScore < 1) {
+        best = candidate;
+        bestScore = 1;
+      }
+      continue;
+    }
+    // Strictly greater, so on a tie the earlier candidate (the named section and entry) wins.
+    const score = Math.max(similarity(key, current), key === before ? 1 : similarity(key, before) * 0.95);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  if (best && bestScore >= CLOSE_MATCH) return { ...stripCandidate(best), exact: false };
+
+  // There is one summary. A summary change that matched nothing is still about it.
+  if (named === 'summary' && str(tailored.summary)) {
+    return { section: 'summary', index: null, field: null, line: null, text: asString(tailored.summary), exact: false };
   }
   return null;
 }
 
-/**
- * Where a change's current wording sits in the tailored resume, or null.
- *
- * @returns {{ section: string, index: number | null, field: string | number | null, line: number | null } | null}
- *   For skills, `field` is the category's position and `line` the skill's.
- */
-export function locateChange(tailored, change) {
-  if (!isPlainObject(tailored) || !isPlainObject(change)) return null;
-  const needle = fold(currentChangeText(change));
-  if (!needle) return null;
-  const named = changeSection(change.section);
-  const target = fold(change.target);
-  const sections = named ? [named, ...CHANGE_SEARCH_ORDER.filter((s) => s !== named)] : CHANGE_SEARCH_ORDER;
-  for (const section of sections) {
-    const hit = findChangeIn(tailored, section, needle, target);
-    if (hit) return hit;
-  }
-  return null;
-}
+const stripCandidate = ({ section, index, field, line, text }) => ({ section, index, field, line, text });
 
 /**
  * The UPDATE_TAILORED_SECTION payload that puts `text` where `location` points
@@ -479,9 +581,11 @@ export function changeEditPayload(tailored, location, text) {
   const { section, index, field, line } = asObject(location);
   if (section === 'summary') return { section, value: asString(text) };
   if (section === 'skills') {
-    const value = toDraft('skills', asObject(tailored).skills).map((group, g) =>
-      g === field ? { ...group, skills: group.skills.map((skill, s) => (s === line ? asString(text) : skill)) } : group
-    );
+    const value = toDraft('skills', asObject(tailored).skills).map((group, g) => {
+      if (g !== field) return group;
+      if (!Number.isInteger(line)) return { ...group, skills: splitSkillLine(text, group.category) };
+      return { ...group, skills: group.skills.map((skill, s) => (s === line ? asString(text) : skill)) };
+    });
     return { section, value };
   }
   const entry = asArray(asObject(tailored)[section])[index];

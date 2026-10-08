@@ -95,6 +95,7 @@ import {
   isDraftAddress,
   locateChange,
   newEntryDraft,
+  splitSkillLine,
   putPendingDraft,
   recordManualEdit,
   recoverableDrafts,
@@ -648,7 +649,10 @@ export function testChangeEditsOffline() {
     const base = sample();
     const loc = (change) => locateChange(base, change);
 
-    check('summary: found by its text', JSON.stringify(loc({ section: 'summary', after: 'Backend engineer.' })) === JSON.stringify({ section: 'summary', index: null, field: null, line: null }));
+    check('summary: found by its text', (() => {
+      const l = loc({ section: 'summary', after: 'Backend engineer.' });
+      return l && l.section === 'summary' && l.index === null && l.text === 'Backend engineer.' && l.exact === true;
+    })());
     check('experience bullet: found with case and spacing folded', (() => {
       const l = loc({ section: 'Work Experience', target: 'Acme', after: '  cut P99 latency   by 35%. ' });
       return l && l.section === 'experience' && l.index === 0 && l.field === 'bullets' && l.line === 1;
@@ -698,11 +702,54 @@ export function testChangeEditsOffline() {
     check('blank text is refused (it would delete the bullet)', applyChangeEdit(base, log, { changeIndex: 1, text: '   ' }) === null);
     check('unchanged text is a no-op', applyChangeEdit(base, log, { changeIndex: 0, text: 'Backend engineer.' }) === null);
     check('a bad index or a lost change is refused', applyChangeEdit(base, log, { changeIndex: 5, text: 'x' }) === null
-      && applyChangeEdit(base, [{ section: 'summary', after: 'gone' }], { changeIndex: 0, text: 'x' }) === null
+      && applyChangeEdit(base, [{ section: 'experience', after: 'gone' }], { changeIndex: 0, text: 'x' }) === null
       && applyChangeEdit(base, log, { changeIndex: '1', text: 'x' }) === null);
     check('a skill edit renames that skill only', (() => {
       const out = applyChangeEdit(base, [{ section: 'skills', after: 'Python' }], { changeIndex: 0, text: 'Python 3' });
       return out && JSON.stringify(out.resume.skills) === JSON.stringify([{ category: 'Languages', skills: ['Go', 'Python 3'] }, { category: 'Infrastructure', skills: ['Kubernetes'] }]);
+    })());
+
+    // The log is the model's account of its edit, not a copy of it.
+    const bigger = {
+      ...base,
+      summary: 'Backend engineer with eight years building Go services at scale.',
+      experience: [
+        { ...base.experience[0], bullets: ['Migrated 40 services to Kubernetes \u2014 with zero downtime.', 'Cut p99 latency by 35% across the payments platform using gRPC.'] },
+        base.experience[1],
+      ],
+      skills: [...base.skills, { category: 'Cloud', skills: ['AWS (EC2, S3)', 'GCP', 'Terraform'] }],
+    };
+    check('punctuation and dashes are ignored', (() => {
+      const l = locateChange(bigger, { section: 'experience', target: 'Acme', after: 'Migrated 40 services to Kubernetes - with zero downtime' });
+      return l && l.index === 0 && l.line === 0 && l.exact === true;
+    })());
+    check('a reworded log line finds the close bullet, and opens on the real text', (() => {
+      const l = locateChange(bigger, { section: 'experience', target: 'Acme', after: 'Cut p99 latency by 35% across the payments platform with gRPC.' });
+      return l && l.line === 1 && l.exact === false && l.text === bigger.experience[0].bullets[1];
+    })());
+    check('the merge restored the original: found through before', (() => {
+      const l = locateChange(base, { section: 'experience', target: 'Beta', before: 'Built a reporting API.', after: 'Designed and shipped a reporting API in Go for finance.' });
+      return l && l.index === 1 && l.line === 0 && l.text === 'Built a reporting API.';
+    })());
+    check('once edited by hand, before is not a fallback', locateChange(base, { section: 'experience', before: 'Built a reporting API.', after: 'x y z w', edited: 'Something else entirely here now.' }) === null);
+    check('a summary change always finds the one summary', (() => {
+      const l = locateChange(bigger, { section: 'Professional Summary', after: 'Completely different summary text the model reported.' });
+      return l && l.section === 'summary' && l.exact === false && l.text === bigger.summary;
+    })());
+    check('different lines are not close matches', locateChange(bigger, { section: 'experience', after: 'Organised the office summer party for forty people.' }) === null);
+    check('short lines match exactly or not at all', locateChange(bigger, { section: 'skills', after: 'Go SDK' }) === null);
+    check('a skills category line is found as one line', (() => {
+      const l = locateChange(bigger, { section: 'Technical Expertise', after: 'Cloud: AWS (EC2, S3), GCP, Terraform' });
+      return l && l.section === 'skills' && l.field === 2 && l.line === null;
+    })());
+    check('editing a category line splits it back into skills, brackets kept', (() => {
+      const out = applyChangeEdit(bigger, [{ section: 'skills', after: 'AWS (EC2, S3), GCP, Terraform' }], { changeIndex: 0, text: 'Cloud: AWS (EC2, S3, EKS), GCP, Terraform, Pulumi' });
+      return out && JSON.stringify(out.resume.skills[2]) === JSON.stringify({ category: 'Cloud', skills: ['AWS (EC2, S3, EKS)', 'GCP', 'Terraform', 'Pulumi'] }) && JSON.stringify(out.resume.skills[0]) === JSON.stringify(bigger.skills[0]);
+    })());
+    check('splitSkillLine keeps a colon that is not the category', JSON.stringify(splitSkillLine('Vue: 3, React', 'Frameworks')) === JSON.stringify(['Vue: 3', 'React']));
+    check('a close-match edit writes that bullet only', (() => {
+      const out = applyChangeEdit(bigger, [{ section: 'experience', target: 'Acme', after: 'Cut p99 latency by 35% across the payments platform with gRPC.' }], { changeIndex: 0, text: 'Cut p99 latency by 35% with gRPC.' });
+      return out && out.resume.experience[0].bullets[1] === 'Cut p99 latency by 35% with gRPC.' && out.resume.experience[0].bullets[0] === bigger.experience[0].bullets[0];
     })());
   } catch (err) {
     check(`threw: ${err.message}`, false, err);

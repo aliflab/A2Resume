@@ -13,7 +13,7 @@ import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { gradeTone } from '../components/ui/scoreBands.js';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
 import { compareScores, describeScoreChange } from '../services/currentResume.js';
-import { currentChangeText, describeManualEdits, locateChange } from '../services/tailoredEdits.js';
+import { describeManualEdits, locateChange } from '../services/tailoredEdits.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS } from '../services/aiService.js';
 import { describeError } from '../utils/errorMessages.js';
@@ -414,13 +414,14 @@ function ChangeItem({ change, index, tailored }) {
   const { dispatch } = useApp();
   const id = useId();
   const [draft, setDraft] = useState(null);
-  const current = currentChangeText(change);
   const editedByHand = typeof change.edited === 'string' && change.edited.trim() !== '';
   // Looked up every render: an edit in the block editor above can move the
-  // text out from under this change at any time.
-  const editable = locateChange(tailored, change) !== null;
+  // text out from under this change at any time. The box opens on what the
+  // resume says there now, which is not always the log's wording of it.
+  const location = locateChange(tailored, change);
+  const editable = location !== null;
   const editing = draft !== null;
-  const unchanged = editing && draft.trim() === current.trim();
+  const unchanged = editing && draft.trim() === location?.text.trim();
 
   const save = () => {
     dispatch({ type: ACTIONS.EDIT_AI_CHANGE, payload: { changeIndex: index, text: draft } });
@@ -437,7 +438,7 @@ function ChangeItem({ change, index, tailored }) {
           <button
             type="button"
             className="button button--sm change__edit-button"
-            onClick={() => setDraft(current)}
+            onClick={() => setDraft(location.text)}
             aria-label={`Edit change ${index + 1}`}
           >
             <Icon name="pencil" size={14} />
@@ -476,6 +477,11 @@ function ChangeItem({ change, index, tailored }) {
             {editedByHand ? 'Your wording' : 'Edit the AI’s wording'}
           </label>
           <textarea id={id} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+          {!location.exact && (
+            <p className="muted change__note">
+              Your resume words this a little differently from the log above, so this box shows what is in your resume now.
+            </p>
+          )}
           {!draft.trim() && (
             <p className="inline-status inline-status--warn">
               It can&rsquo;t be blank here. To remove it, use the editor above.
@@ -494,7 +500,8 @@ function ChangeItem({ change, index, tailored }) {
 
       {!editable && (
         <p className="change__gone muted">
-          This wording is no longer in your resume. It was changed in the editor above, so edit it there.
+          This wording can&rsquo;t be found in your resume, so it can&rsquo;t be edited from here. It may have been
+          changed in the editor above. Edit it there.
         </p>
       )}
 

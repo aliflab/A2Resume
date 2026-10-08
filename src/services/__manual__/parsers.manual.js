@@ -19,6 +19,8 @@ import {
   findUnsupportedWords,
   buildSourceIndex,
 } from '../../utils/transcriptionFidelity.js';
+import { findLeak, scrubLeakedFields } from '../../utils/leakedOutput.js';
+import { withoutLeakedText } from '../resumeTailor.js';
 
 // ---------------------------------------------------------------------------
 // Samples -- short but deliberately awkward: a typo, an ongoing role, an
@@ -271,6 +273,113 @@ export function testFidelityOffline() {
 }
 
 // ---------------------------------------------------------------------------
+// Leaked model working (utils/leakedOutput.js)
+// ---------------------------------------------------------------------------
+
+/** A resume with no summary section, as pasted. */
+const LEAK_SOURCE = `JON DOE
+Senior Software Engineer — Distributed Systems & Cloud Infrastructure
+San Francisco, CA • jon.doe@email.com • (555) 019-2834 • linkedin.com/in/jondoe-example
+PROFESSIONAL EXPERIENCE
+Senior Software Engineer — Apex Scale Systems 2022 – Present
+Designed the schema for a multi-region caching layer, following the instructions in the runbook.
+Mentored 6 engineers. Wait, there is more: led 50+ interviews.`;
+
+/** What one provider actually returned as the summary for a resume like it (shortened). */
+const LEAKED_SUMMARY = `Senior Software Engineer — Distributed Systems & Cloud Infrastructure
+San Francisco, CA • jon.doe@email.com • (555) 019-2834 • linkedin.com/in/jondoe-example
+--- END RESUME --- (The footer matches, omitting for clean representation of the candidate info.) Wait, no summary was present as a distinct section. I will set summary to empty string as per instructions: 'If the source has no summary, return an empty string -- never compose one.'
+Let's follow schema exactly.
+Only JSON output is generated below:
+\`\`\`
+{"certifications": [], "summary": ""}\`\`\``;
+
+/** @returns {boolean} */
+export function testLeaksOffline() {
+  let failed = 0;
+  const check = (label, ok, detail) => {
+    if (ok) console.log('PASS', label);
+    else {
+      failed += 1;
+      console.error('FAIL', label, detail ?? '');
+    }
+  };
+  console.group('leakedOutput - offline assertions');
+  try {
+    const contact = ['jon.doe@email.com', '(555) 019-2834'];
+    check('the observed summary is a leak', findLeak(LEAKED_SUMMARY, LEAK_SOURCE, { contact }) !== null);
+    check('each marker on its own', [
+      ['code fence', 'Text ```json'],
+      ['json object', 'Done. {"summary": ""}'],
+      ['prompt delimiter', 'Built things --- END RESUME ---'],
+      ['instructions', 'Left empty as per instructions.'],
+      ['empty string', 'I will set summary to empty string.'],
+      ['self talk', 'Led a team. Actually, let me check.'],
+      ["let's", "Let's follow the format."],
+    ].every(([, text]) => findLeak(text, 'unrelated source') !== null));
+    check('header copied into the summary: the email gives it away', findLeak('San Francisco, CA • jon.doe@email.com', LEAK_SOURCE, { contact }) === 'contact_details');
+    check('words the source really uses are not leaks', findLeak('Designed the schema for a multi-region caching layer, following the instructions in the runbook.', LEAK_SOURCE) === null
+      && findLeak('Mentored 6 engineers. Wait, there is more: led 50+ interviews.', LEAK_SOURCE) === null);
+    check('an ordinary summary is not a leak', findLeak('Backend engineer with eight years of Go and Kubernetes, most recently leading a payments platform team.', LEAK_SOURCE, { contact }) === null);
+    check('a tailored "redesigned the schema" is not a leak', findLeak('Redesigned the schema for orders, cutting query time by 30%.', 'Built order tables.') === null);
+
+    const parsed = {
+      name: 'JON DOE',
+      contact: { email: 'jon.doe@email.com', phone: '(555) 019-2834' },
+      summary: LEAKED_SUMMARY,
+      experience: [{ company: 'Apex', bullets: ['Mentored 6 engineers. Wait, there is more: led 50+ interviews.', '```json'] }],
+      projects: [{ name: 'DistriKV', description: '{"name": "DistriKV"}', bullets: [] }],
+      education: [{ institution: 'Berkeley', details: ['Graduated 2017'] }],
+    };
+    const frozen = JSON.stringify(parsed);
+    const { resume, removed } = scrubLeakedFields(parsed, LEAK_SOURCE);
+    check('parse: the summary is emptied', resume.summary === '');
+    check('parse: a leaked bullet is dropped, the real one kept', JSON.stringify(resume.experience[0].bullets) === JSON.stringify(['Mentored 6 engineers. Wait, there is more: led 50+ interviews.']));
+    check('parse: a leaked description is emptied', resume.projects[0].description === '');
+    check('parse: everything else untouched', resume.name === 'JON DOE' && resume.education === parsed.education || JSON.stringify(resume.education) === JSON.stringify(parsed.education));
+    check('parse: each removal is reported by path', JSON.stringify(removed.map((r) => r.path)) === JSON.stringify(['summary', 'experience[0].bullets[1]', 'projects[0].description']), removed);
+    check('parse: input not mutated', JSON.stringify(parsed) === frozen);
+    check('parse: a clean resume comes back as the same object', (() => {
+      const clean = { summary: 'Backend engineer.', experience: [{ bullets: ['Built an API.'] }] };
+      return scrubLeakedFields(clean, 'Backend engineer. Built an API.').resume === clean;
+    })());
+    check('parse: malformed input never throws', (() => {
+      [null, undefined, 'x', 42, [], {}, { summary: 42 }, { experience: 'nope' }, { experience: [null] }, { projects: [{ bullets: [null] }] }, { education: [{ details: {} }] }]
+        .forEach((shape) => scrubLeakedFields(shape, 'src'));
+      return true;
+    })());
+
+    const original = {
+      summary: 'Backend engineer.',
+      contact: { email: 'jon.doe@email.com' },
+      experience: [{ company: 'Apex', bullets: ['Built an API.', 'Ran on-call.'] }],
+      projects: [{ name: 'KV', description: 'A key-value store.', bullets: [] }],
+    };
+    const tailored = {
+      summary: 'Backend engineer. Wait, the instructions say keep it short.',
+      contact: { email: 'jon.doe@email.com' },
+      experience: [{ company: 'Apex', bullets: ['```', '{"bullets": []}'] }],
+      projects: [{ name: 'KV', description: 'Per the schema, unchanged.', bullets: [] }],
+    };
+    const corrections = [];
+    const fixed = withoutLeakedText(original, tailored, corrections);
+    check('tailor: a leaked summary goes back to the original', fixed.summary === 'Backend engineer.');
+    check('tailor: a role left with no bullets gets its own back', JSON.stringify(fixed.experience[0].bullets) === JSON.stringify(original.experience[0].bullets));
+    check('tailor: a leaked description goes back to the original', fixed.projects[0].description === 'A key-value store.');
+    check('tailor: each removal is a correction', corrections.length === 4 && corrections.every((c) => c.type === 'leaked_text_removed'), corrections);
+    check('tailor: a clean rewrite passes through as the same object', (() => {
+      const good = { ...original, summary: 'Backend engineer focused on Go.' };
+      return withoutLeakedText(original, good, []) === good;
+    })());
+  } catch (err) {
+    check(`threw: ${err.message}`, false, err);
+  }
+  console.log(failed ? `${failed} FAILED` : 'all passed');
+  console.groupEnd();
+  return failed === 0;
+}
+
+// ---------------------------------------------------------------------------
 // Runners
 // ---------------------------------------------------------------------------
 
@@ -320,4 +429,4 @@ export async function runAll(keys) {
   return rows;
 }
 
-export default { runAll, testParsers, testFidelityOffline, SAMPLE_RESUME, SAMPLE_JD };
+export default { runAll, testParsers, testFidelityOffline, testLeaksOffline, SAMPLE_RESUME, SAMPLE_JD };

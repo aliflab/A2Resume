@@ -3781,7 +3781,8 @@ fieldset.card {
   margin: 0;
 }
 
-.change__gone {
+.change__gone,
+.change__note {
   margin: 0 0 var(--space-2);
   font-size: var(--text-xs);
 }

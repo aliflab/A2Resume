@@ -39,6 +39,7 @@ import { callStructured } from './aiService.js';
 import { RESUME_SCHEMA } from './resumeParser.js';
 import { asArray, asString, asObject } from './gapAnalyzer.js';
 import { buildExclusionPromptSection, isExcludedKeyword } from '../utils/jdKeywordExclusions.js';
+import { scrubLeakedFields, stringsOf } from '../utils/leakedOutput.js';
 
 /**
  * Tailoring gets its own timeout rather than the shared 20s default.
@@ -473,6 +474,35 @@ function reconcileEntries({ originals, tailoreds, keyOf, label, describe, restor
   });
 }
 
+/**
+ * The tailoring model can write its own working into the resume the same way
+ * the parser can (see utils/leakedOutput.js). Here there is an original to go
+ * back to, so a leaked summary or project description is restored rather than
+ * emptied, and a leaked bullet is dropped; a role left with no bullets gets
+ * its original ones back. The source the markers are checked against is every
+ * string in the original resume, since that is what the model was given.
+ */
+export function withoutLeakedText(original, merged, corrections) {
+  const { resume: clean, removed } = scrubLeakedFields(merged, stringsOf(original));
+  if (removed.length === 0) return merged;
+  const src = asObject(original);
+  const out = { ...clean };
+  if (removed.some((r) => r.path === 'summary')) out.summary = asString(src.summary);
+  out.experience = asArray(clean.experience).map((entry, i) => {
+    const before = asObject(asArray(src.experience)[i]);
+    return asArray(entry.bullets).length === 0 && asArray(before.bullets).length > 0 ? { ...entry, bullets: asArray(before.bullets) } : entry;
+  });
+  out.projects = asArray(clean.projects).map((entry, i) => {
+    const before = asObject(asArray(src.projects)[i]);
+    const restored = removed.some((r) => r.path === `projects[${i}].description`) ? { ...entry, description: asString(before.description) } : entry;
+    return asArray(restored.bullets).length === 0 && asArray(before.bullets).length > 0 ? { ...restored, bullets: asArray(before.bullets) } : restored;
+  });
+  for (const r of removed) {
+    corrections.push({ type: 'leaked_text_removed', detail: `${r.path}: the model's own notes (${r.marker}) were removed` });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The call
 // ---------------------------------------------------------------------------
@@ -572,7 +602,8 @@ Return the edited resume under "resume", and every change you made under "change
   });
 
   const data = asObject(result.data);
-  const { resume: merged, corrections } = mergeNonDestructiveResume(resume, data.resume);
+  const { resume: reconciled, corrections } = mergeNonDestructiveResume(resume, data.resume);
+  const merged = withoutLeakedText(resume, reconciled, corrections);
 
   const changesLog = asArray(data.changesLog)
     .map((entry) => {
