@@ -378,6 +378,7 @@ export async function testScenario() {
       // contains, so both must rescore exactly like a hand edit.
       ADD_TAILORED_ENTRY: { section: 'experience', value: { ...newEntryDraft('experience'), title: 'Platform Engineer', company: 'Nimbus Data', startDate: 'Feb 2024', bullets: ['Ran the Terraform migration for 12 AWS accounts.'] } },
       REMOVE_TAILORED_ENTRY: { section: 'experience', index: 0 },
+      EDIT_AI_CHANGE: { changeIndex: 0, text: 'Edited from the change list.' },
       SET_SOURCES: { provider: 'claude' },
       SET_SETTINGS: { provider: 'claude' },
       DISMISS_SESSION_NOTICE: undefined,

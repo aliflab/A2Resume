@@ -460,6 +460,7 @@ export async function testReducer() {
       UPDATE_TAILORED_SECTION: { section: 'summary', value: 'Another summary.' },
       ADD_TAILORED_ENTRY: { section: 'projects', value: { name: 'A project' } },
       REMOVE_TAILORED_ENTRY: { section: 'certifications', index: 0 },
+      EDIT_AI_CHANGE: { changeIndex: 0, text: 'Edited from the change list.' },
       SET_DRAFT_EDIT: { section: 'summary', value: 'typed' },
       DISCARD_DRAFT_EDIT: { section: 'summary' },
       SET_COVER_LETTER: slice,

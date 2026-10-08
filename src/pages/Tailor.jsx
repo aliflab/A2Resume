@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useState } from 'react';
 import { Link } from 'react-router';
 
 import { useApp, ACTIONS } from '../context/AppContext.jsx';
@@ -13,7 +13,7 @@ import WorkingLine from '../components/ui/WorkingLine.jsx';
 import { gradeTone } from '../components/ui/scoreBands.js';
 import { tailorResumeWithAI } from '../services/resumeTailor.js';
 import { compareScores, describeScoreChange } from '../services/currentResume.js';
-import { describeManualEdits } from '../services/tailoredEdits.js';
+import { currentChangeText, describeManualEdits, locateChange } from '../services/tailoredEdits.js';
 import { getApiKey, getKeyPresence } from '../services/apiKeyService.js';
 import { PROVIDER_LABELS } from '../services/aiService.js';
 import { describeError } from '../utils/errorMessages.js';
@@ -190,7 +190,7 @@ export default function Tailor() {
           <div className="stack">
             {corrections.length > 0 && <CorrectionsNotice corrections={corrections} />}
             <TailoredResumeEditor resume={tailored} />
-            {changesLog.length > 0 && <ChangesList changes={changesLog} edited={edits.length > 0} />}
+            {changesLog.length > 0 && <ChangesList changes={changesLog} tailored={tailored} />}
           </div>
 
           <aside className="aside" aria-label="Tailoring summary">
@@ -381,7 +381,13 @@ function CorrectionsNotice({ corrections }) {
   );
 }
 
-function ChangesList({ changes, edited }) {
+/**
+ * The AI's before/after log. Each change can be edited where it is listed:
+ * the edit goes through EDIT_AI_CHANGE, which commits it like a block save in
+ * the editor above (same log, same rescore) and records the new wording on the
+ * change. The AI's own "After" stays visible next to it.
+ */
+function ChangesList({ changes, tailored }) {
   return (
     <section className="card">
       <div className="section-head">
@@ -390,41 +396,109 @@ function ChangesList({ changes, edited }) {
             What the AI changed <span className="muted">({changes.length})</span>
           </h2>
           <p className="muted">
-            {edited
-              ? 'Your hand edits are not listed here, so an “After” below may no longer match your resume.'
-              : 'Each rewrite next to the original it replaced, with the reason it gave.'}
+            Each rewrite next to the original it replaced, with the reason it gave. Edit any of them here. Edits made in
+            the editor above are not listed, so an &ldquo;After&rdquo; may no longer match your resume.
           </p>
         </div>
       </div>
       <ol className="changes">
         {changes.map((change, i) => (
-          <li key={`${change.section}-${i}`} className="change">
-            <p className="change__where">
-              <span className="badge">{change.section || 'resume'}</span>
-              {change.target && <span className="change__target">{change.target}</span>}
-            </p>
-
-            {change.before ? (
-              <p className="change__before">
-                <span className="change__label">Before</span>
-                {change.before}
-              </p>
-            ) : (
-              <p className="change__before change__before--empty">
-                <span className="change__label">Before</span>
-                <em>(new — nothing here previously)</em>
-              </p>
-            )}
-
-            <p className="change__after">
-              <span className="change__label">After</span>
-              {change.after}
-            </p>
-
-            {change.reason && <p className="change__reason muted">{change.reason}</p>}
-          </li>
+          <ChangeItem key={`${change.section}-${i}`} change={change} index={i} tailored={tailored} />
         ))}
       </ol>
     </section>
+  );
+}
+
+function ChangeItem({ change, index, tailored }) {
+  const { dispatch } = useApp();
+  const id = useId();
+  const [draft, setDraft] = useState(null);
+  const current = currentChangeText(change);
+  const editedByHand = typeof change.edited === 'string' && change.edited.trim() !== '';
+  // Looked up every render: an edit in the block editor above can move the
+  // text out from under this change at any time.
+  const editable = locateChange(tailored, change) !== null;
+  const editing = draft !== null;
+  const unchanged = editing && draft.trim() === current.trim();
+
+  const save = () => {
+    dispatch({ type: ACTIONS.EDIT_AI_CHANGE, payload: { changeIndex: index, text: draft } });
+    setDraft(null);
+  };
+
+  return (
+    <li className="change">
+      <div className="change__where">
+        <span className="badge">{change.section || 'resume'}</span>
+        {change.target && <span className="change__target">{change.target}</span>}
+        {editedByHand && <span className="badge badge--info">Edited by you</span>}
+        {editable && !editing && (
+          <button
+            type="button"
+            className="button button--sm change__edit-button"
+            onClick={() => setDraft(current)}
+            aria-label={`Edit change ${index + 1}`}
+          >
+            <Icon name="pencil" size={14} />
+            Edit
+          </button>
+        )}
+      </div>
+
+      {change.before ? (
+        <p className="change__before">
+          <span className="change__label">Before</span>
+          {change.before}
+        </p>
+      ) : (
+        <p className="change__before change__before--empty">
+          <span className="change__label">Before</span>
+          <em>(new — nothing here previously)</em>
+        </p>
+      )}
+
+      <p className="change__after">
+        <span className="change__label">{editedByHand ? 'After (AI)' : 'After'}</span>
+        {change.after}
+      </p>
+
+      {editedByHand && !editing && (
+        <p className="change__after change__now">
+          <span className="change__label">Now (your edit)</span>
+          {change.edited}
+        </p>
+      )}
+
+      {editing && (
+        <div className="change__edit">
+          <label className="field-label" htmlFor={id}>
+            {editedByHand ? 'Your wording' : 'Edit the AI’s wording'}
+          </label>
+          <textarea id={id} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+          {!draft.trim() && (
+            <p className="inline-status inline-status--warn">
+              It can&rsquo;t be blank here. To remove it, use the editor above.
+            </p>
+          )}
+          <div className="actions">
+            <button type="button" className="button button--primary button--sm" onClick={save} disabled={!draft.trim() || unchanged}>
+              Save
+            </button>
+            <button type="button" className="button button--sm" onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!editable && (
+        <p className="change__gone muted">
+          This wording is no longer in your resume. It was changed in the editor above, so edit it there.
+        </p>
+      )}
+
+      {change.reason && <p className="change__reason muted">{change.reason}</p>}
+    </li>
   );
 }

@@ -5,6 +5,7 @@ import { UNVERSIONED, clearSession, freshProvenance, loadSession, saveSession } 
 import { removeMatchResult } from '../services/matchRunner.js';
 import {
   NEW_ENTRY_INDEX,
+  applyChangeEdit,
   applyTailoredEdit,
   applyTailoredEntryAdd,
   applyTailoredEntryRemoval,
@@ -213,6 +214,8 @@ export const ACTIONS = {
   ADD_TAILORED_ENTRY: 'add_tailored_entry',
   /** Delete one entry from a list section. Payload `{ section, index }`. */
   REMOVE_TAILORED_ENTRY: 'remove_tailored_entry',
+  /** Rewrite one AI change's wording, from "What the AI changed". Payload `{ changeIndex, text }`. */
+  EDIT_AI_CHANGE: 'edit_ai_change',
   /** Autosave one open editor block's unsaved content. Payload `{ section, index, value }`. */
   SET_DRAFT_EDIT: 'set_draft_edit',
   /** Throw one pending draft away. Payload `{ section, index }`. */
@@ -304,6 +307,7 @@ export const RESCORING_ACTIONS = [
   'UPDATE_TAILORED_SECTION', // a hand edit to the tailored copy
   'ADD_TAILORED_ENTRY', // a whole entry written by hand: new keywords, new bullets
   'REMOVE_TAILORED_ENTRY', // a whole entry deleted: its keywords leave the resume
+  'EDIT_AI_CHANGE', // a hand edit made from the AI change list
   'MERGE_INFERRED_SKILLS', // approved skills appended to either copy
   'CLEAR_TAILORING', // pass discarded: current falls back to `resume`
 ];
@@ -469,6 +473,22 @@ function reduce(state, action) {
         tailorManualEdits: recordManualEdit(logged, result.edit),
         // Emptied means gone, not an empty array -- the same rule as a save.
         draftEdits: Array.isArray(drafts) && drafts.length === 0 ? null : drafts,
+      };
+    }
+
+    // A hand edit made from "What the AI changed". It is committed exactly like
+    // a block save (applyChangeEdit goes through applyTailoredEdit) and logged
+    // the same way, so Discard names it. The change also keeps the new wording
+    // as `edited`, so the list can show it and find it again after a reload.
+    // The AI's own `after` is left alone: the list is still the AI's record.
+    case ACTIONS.EDIT_AI_CHANGE: {
+      const result = applyChangeEdit(state.tailoredResume, state.changesLog, action.payload);
+      if (!result) return state;
+      return {
+        ...state,
+        tailoredResume: result.resume,
+        tailorManualEdits: recordManualEdit(state.tailorManualEdits, result.edit),
+        changesLog: result.changesLog,
       };
     }
 

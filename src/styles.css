@@ -3757,6 +3757,35 @@ fieldset.card {
   font-size: var(--text-xs);
 }
 
+.change__edit-button {
+  margin-left: auto;
+}
+
+.change__now {
+  background: var(--color-info-soft);
+  box-shadow: inset 2px 0 0 var(--color-info);
+}
+
+.change__edit {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
+
+.change__edit textarea {
+  width: 100%;
+  font-size: var(--text-sm);
+}
+
+.change__edit .actions {
+  margin: 0;
+}
+
+.change__gone {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+
 /* Hand editor: a document, one block per section or entry. */
 .editor-card {
   padding: 0;

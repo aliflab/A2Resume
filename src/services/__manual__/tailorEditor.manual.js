@@ -77,10 +77,13 @@ import {
   ENTRY_INSERT_AT,
   LIST_SECTIONS,
   NEW_ENTRY_INDEX,
+  applyChangeEdit,
   applyTailoredEdit,
   applyTailoredEntryAdd,
   applyTailoredEntryRemoval,
+  changeEditPayload,
   committedDraft,
+  currentChangeText,
   describeEntry,
   describeManualEdits,
   draftKey,
@@ -90,6 +93,7 @@ import {
   insertsAtTop,
   isBlankEntryDraft,
   isDraftAddress,
+  locateChange,
   newEntryDraft,
   putPendingDraft,
   recordManualEdit,
@@ -630,6 +634,85 @@ export function testEntriesOffline() {
   return failed === 0;
 }
 
+/**
+ * "What the AI changed" edits: finding a change's text in the tailored resume,
+ * and committing an edit to exactly that line through applyTailoredEdit.
+ * Pure, so it also runs under Node.
+ *
+ * @returns {boolean}
+ */
+export function testChangeEditsOffline() {
+  failed = 0;
+  console.group('tailorEditor - AI change edits (offline)');
+  try {
+    const base = sample();
+    const loc = (change) => locateChange(base, change);
+
+    check('summary: found by its text', JSON.stringify(loc({ section: 'summary', after: 'Backend engineer.' })) === JSON.stringify({ section: 'summary', index: null, field: null, line: null }));
+    check('experience bullet: found with case and spacing folded', (() => {
+      const l = loc({ section: 'Work Experience', target: 'Acme', after: '  cut P99 latency   by 35%. ' });
+      return l && l.section === 'experience' && l.index === 0 && l.field === 'bullets' && l.line === 1;
+    })());
+    check('project description: found', (() => {
+      const l = loc({ section: 'projects', target: 'Tracer', after: 'Tracing library.' });
+      return l && l.section === 'projects' && l.index === 0 && l.field === 'description' && l.line === null;
+    })());
+    check('education detail: found', (() => {
+      const r = { ...base, education: [{ ...base.education[0], details: ['First-class honours.'] }] };
+      const l = locateChange(r, { section: 'education', after: 'First-class honours.' });
+      return l && l.section === 'education' && l.field === 'details' && l.line === 0;
+    })());
+    check('skill: found inside its category', (() => {
+      const l = loc({ section: 'skills', after: 'Kubernetes' });
+      return l && l.section === 'skills' && l.field === 1 && l.line === 0;
+    })());
+    check('a mislabelled section still finds the text elsewhere', loc({ section: 'summary', after: 'Built a reporting API.' })?.index === 1);
+    check('target first: the same bullet in two roles resolves to the named one', (() => {
+      const twin = { ...base, experience: [base.experience[0], { ...base.experience[1], bullets: ['Migrated 40 services to Kubernetes.'] }] };
+      return locateChange(twin, { section: 'experience', target: 'Beta', after: 'Migrated 40 services to Kubernetes.' })?.index === 1
+        && locateChange(twin, { section: 'experience', target: 'Acme', after: 'Migrated 40 services to Kubernetes.' })?.index === 0;
+    })());
+    check('no match: null', loc({ section: 'experience', after: 'Text that is nowhere.' }) === null);
+    check('empty after: null', loc({ section: 'summary', after: '' }) === null);
+    check('junk input: null, no throw', locateChange(null, {}) === null && locateChange(base, null) === null && locateChange(base, 'x') === null);
+    check('currentChangeText prefers a non-blank edit', currentChangeText({ after: 'A', edited: 'B' }) === 'B' && currentChangeText({ after: 'A', edited: '  ' }) === 'A');
+
+    const payload = changeEditPayload(base, loc({ section: 'experience', target: 'Acme', after: 'Cut p99 latency by 35%.' }), 'Cut p99 latency by 35% with gRPC.');
+    const applied = applyTailoredEdit(base, payload);
+    check('the payload changes that bullet and nothing else', (() => {
+      const e = applied.resume.experience;
+      return e[0].bullets[1] === 'Cut p99 latency by 35% with gRPC.' && e[0].bullets[0] === base.experience[0].bullets[0]
+        && e[0].company === 'Acme' && e[0].isCurrentlyWorking === true && e[1] === base.experience[1] && applied.resume.summary === base.summary;
+    })());
+
+    const log = [
+      { section: 'summary', target: '', before: 'Engineer.', after: 'Backend engineer.', reason: 'r' },
+      { section: 'experience', target: 'Acme', before: 'Cut latency.', after: 'Cut p99 latency by 35%.', reason: 'r' },
+    ];
+    const first = applyChangeEdit(base, log, { changeIndex: 1, text: '  Cut p99 latency by 35% using Go.  ' });
+    check('applyChangeEdit: writes the line, trimmed', first?.resume.experience[0].bullets[1] === 'Cut p99 latency by 35% using Go.');
+    check('applyChangeEdit: records edited, keeps the AI after', first?.changesLog[1].edited === 'Cut p99 latency by 35% using Go.' && first.changesLog[1].after === 'Cut p99 latency by 35%.' && first.changesLog[0] === log[0]);
+    check('applyChangeEdit: returns a normal edit-log row', first?.edit.section === 'experience' && first.edit.index === 0 && first.edit.label.includes('Acme'));
+    const second = first && applyChangeEdit(first.resume, first.changesLog, { changeIndex: 1, text: 'Cut p99 latency by 35% using Go and gRPC.' });
+    check('a second edit is found through `edited`', second?.resume.experience[0].bullets[1] === 'Cut p99 latency by 35% using Go and gRPC.');
+    check('blank text is refused (it would delete the bullet)', applyChangeEdit(base, log, { changeIndex: 1, text: '   ' }) === null);
+    check('unchanged text is a no-op', applyChangeEdit(base, log, { changeIndex: 0, text: 'Backend engineer.' }) === null);
+    check('a bad index or a lost change is refused', applyChangeEdit(base, log, { changeIndex: 5, text: 'x' }) === null
+      && applyChangeEdit(base, [{ section: 'summary', after: 'gone' }], { changeIndex: 0, text: 'x' }) === null
+      && applyChangeEdit(base, log, { changeIndex: '1', text: 'x' }) === null);
+    check('a skill edit renames that skill only', (() => {
+      const out = applyChangeEdit(base, [{ section: 'skills', after: 'Python' }], { changeIndex: 0, text: 'Python 3' });
+      return out && JSON.stringify(out.resume.skills) === JSON.stringify([{ category: 'Languages', skills: ['Go', 'Python 3'] }, { category: 'Infrastructure', skills: ['Kubernetes'] }]);
+    })());
+  } catch (err) {
+    check(`threw: ${err.message}`, false, err);
+  } finally {
+    console.log(failed ? `${failed} FAILED` : 'all passed');
+    console.groupEnd();
+  }
+  return failed === 0;
+}
+
 export async function testReducer() {
   failed = 0;
   const { appReducer, initialState, ACTIONS } = await import('../../context/AppContext.jsx');
@@ -650,6 +733,17 @@ export async function testReducer() {
     check('a new pass (SET_TAILORED_RESUME) clears the edit log', appReducer(s, { type: ACTIONS.SET_TAILORED_RESUME, payload: { resume: base, changesLog: [], parsedJD: s.parsedJD } }).tailorManualEdits === null);
     const merged = appReducer(s, { type: ACTIONS.MERGE_INFERRED_SKILLS, payload: ['Terraform'] });
     check('approving an inferred skill keeps hand edits and is not logged as one', merged.tailoredResume.summary === 'Staff backend engineer.' && merged.tailorManualEdits.length === 1);
+
+    // EDIT_AI_CHANGE: a hand edit made from the AI change list.
+    const withLog = { ...start, changesLog: [{ section: 'experience', target: 'Acme', before: 'Moved services.', after: 'Migrated 40 services to Kubernetes.', reason: 'r' }] };
+    const changed = appReducer(withLog, { type: ACTIONS.EDIT_AI_CHANGE, payload: { changeIndex: 0, text: 'Migrated 40 services to Kubernetes with Terraform.' } });
+    check('EDIT_AI_CHANGE writes tailoredResume only', changed.tailoredResume.experience[0].bullets[0] === 'Migrated 40 services to Kubernetes with Terraform.' && changed.resume === base);
+    check('EDIT_AI_CHANGE records edited and logs a hand edit', changed.changesLog[0].edited === 'Migrated 40 services to Kubernetes with Terraform.' && describeManualEdits(changed.tailorManualEdits).length === 1);
+    check('EDIT_AI_CHANGE: blank text returns the same state', appReducer(withLog, { type: ACTIONS.EDIT_AI_CHANGE, payload: { changeIndex: 0, text: '' } }) === withLog);
+    check('EDIT_AI_CHANGE: no tailored resume returns the same state', (() => {
+      const none = { ...withLog, tailoredResume: null };
+      return appReducer(none, { type: ACTIONS.EDIT_AI_CHANGE, payload: { changeIndex: 0, text: 'x' } }) === none;
+    })());
   } finally {
     console.log(failed ? `${failed} FAILED` : 'all passed');
     console.groupEnd();
@@ -836,6 +930,7 @@ export async function testEntriesReducer() {
       UPDATE_TAILORED_SECTION: { section: 'summary', value: 'A different summary entirely.' },
       ADD_TAILORED_ENTRY: { section: 'projects', value: { ...newEntryDraft('projects'), name: 'Another project' } },
       REMOVE_TAILORED_ENTRY: { section: 'certifications', index: 0 },
+      EDIT_AI_CHANGE: { changeIndex: 0, text: 'Edited from the change list.' },
       SET_DRAFT_EDIT: { section: 'summary', value: 'typed but not saved' },
       DISCARD_DRAFT_EDIT: { section: 'summary' },
       // Neither the cover letter nor the Match batch touches the tailored
@@ -1829,6 +1924,7 @@ export default {
   testOffline,
   testDraftsOffline,
   testEntriesOffline,
+  testChangeEditsOffline,
   testReducer,
   testEntriesReducer,
   liveEditBullet,

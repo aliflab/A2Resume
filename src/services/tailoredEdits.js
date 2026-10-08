@@ -361,6 +361,166 @@ export function applyTailoredEdit(tailored, payload) {
 }
 
 // ---------------------------------------------------------------------------
+// Editing one AI change in place
+// ---------------------------------------------------------------------------
+
+/**
+ * "What the AI changed" lets each rewrite be edited where it is listed. The
+ * change log records text, not an address, so the text is looked up in the
+ * tailored resume, and the edit is then committed through `applyTailoredEdit`
+ * like any other block save. That reuse is the point: validation, the no-op
+ * rule, the hand-edit log and the rescore all come with it.
+ *
+ * Matching is exact once case and whitespace are folded. A change whose text
+ * has since been rewritten in the editor above is not found, and the page says
+ * so instead of guessing at a near match.
+ */
+
+const fold = (value) => str(value).replace(/\s+/g, ' ').toLowerCase();
+
+/** The wording a change currently stands for: the user's edit of it if there is one, else the AI's. */
+export function currentChangeText(change) {
+  const c = asObject(change);
+  return typeof c.edited === 'string' && c.edited.trim() ? c.edited : asString(c.after);
+}
+
+/** The model names sections freely ("Work Experience", "Profile"); map that onto the schema's keys. */
+function changeSection(name) {
+  const s = fold(name);
+  if (!s) return null;
+  if (/summary|profile|objective|about/.test(s)) return 'summary';
+  if (/skill/.test(s)) return 'skills';
+  if (/project/.test(s)) return 'projects';
+  if (/educat/.test(s)) return 'education';
+  if (/experience|work|employment|role|job/.test(s)) return 'experience';
+  return null;
+}
+
+const CHANGE_SEARCH_ORDER = ['summary', 'experience', 'projects', 'education', 'skills'];
+
+/** The copied-text fields of each list section, in the order they are searched. */
+const CHANGE_TEXT_FIELDS = {
+  experience: ['bullets'],
+  projects: ['description', 'bullets'],
+  education: ['details'],
+};
+
+/** What `change.target` may name for an entry of each section. */
+const CHANGE_TARGET_FIELDS = {
+  experience: ['company', 'title'],
+  projects: ['name'],
+  education: ['institution', 'degree'],
+};
+
+function namesTarget(section, entry, target) {
+  if (!target) return false;
+  return CHANGE_TARGET_FIELDS[section].some((field) => {
+    const name = fold(entry[field]);
+    return name && (name.includes(target) || target.includes(name));
+  });
+}
+
+function findChangeIn(tailored, section, needle, target) {
+  if (section === 'summary') {
+    return fold(tailored.summary) === needle ? { section, index: null, field: null, line: null } : null;
+  }
+  if (section === 'skills') {
+    // Searched in draft shape, so the indices are the ones changeEditPayload writes to.
+    const groups = toDraft('skills', tailored.skills);
+    for (let g = 0; g < groups.length; g += 1) {
+      const s = groups[g].skills.findIndex((skill) => fold(skill) === needle);
+      if (s >= 0) return { section, index: null, field: g, line: s };
+    }
+    return null;
+  }
+  const list = asArray(tailored[section]);
+  // Entries the change names come first; a stable sort keeps the rest in order.
+  const order = list.map((_, i) => i).sort((a, b) => namesTarget(section, asObject(list[b]), target) - namesTarget(section, asObject(list[a]), target));
+  for (const index of order) {
+    const entry = asObject(list[index]);
+    for (const field of CHANGE_TEXT_FIELDS[section]) {
+      const value = entry[field];
+      if (Array.isArray(value)) {
+        const line = value.findIndex((item) => fold(item) === needle);
+        if (line >= 0) return { section, index, field, line };
+      } else if (fold(value) === needle) {
+        return { section, index, field, line: null };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Where a change's current wording sits in the tailored resume, or null.
+ *
+ * @returns {{ section: string, index: number | null, field: string | number | null, line: number | null } | null}
+ *   For skills, `field` is the category's position and `line` the skill's.
+ */
+export function locateChange(tailored, change) {
+  if (!isPlainObject(tailored) || !isPlainObject(change)) return null;
+  const needle = fold(currentChangeText(change));
+  if (!needle) return null;
+  const named = changeSection(change.section);
+  const target = fold(change.target);
+  const sections = named ? [named, ...CHANGE_SEARCH_ORDER.filter((s) => s !== named)] : CHANGE_SEARCH_ORDER;
+  for (const section of sections) {
+    const hit = findChangeIn(tailored, section, needle, target);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * The UPDATE_TAILORED_SECTION payload that puts `text` where `location` points
+ * and changes nothing else in that section or entry.
+ */
+export function changeEditPayload(tailored, location, text) {
+  const { section, index, field, line } = asObject(location);
+  if (section === 'summary') return { section, value: asString(text) };
+  if (section === 'skills') {
+    const value = toDraft('skills', asObject(tailored).skills).map((group, g) =>
+      g === field ? { ...group, skills: group.skills.map((skill, s) => (s === line ? asString(text) : skill)) } : group
+    );
+    return { section, value };
+  }
+  const entry = asArray(asObject(tailored)[section])[index];
+  const draft = toDraft(section, entry);
+  if (!draft || !(field in draft)) return null;
+  draft[field] = Number.isInteger(line) ? draft[field].map((item, j) => (j === line ? asString(text) : item)) : asString(text);
+  return { section, index, value: draft };
+}
+
+/**
+ * Apply an edit to one entry of `changesLog`. Returns the new resume, the
+ * hand-edit row to log, and the change log with that change's `edited` set --
+ * or null when the edit is blank, cannot be placed, or changes nothing.
+ *
+ * Blank is refused rather than committed: a blank bullet is dropped on
+ * commit, so saving an empty box would silently delete the bullet.
+ *
+ * @param {unknown} tailored
+ * @param {unknown} changesLog
+ * @param {{ changeIndex: number, text: string }} payload
+ */
+export function applyChangeEdit(tailored, changesLog, payload) {
+  const { changeIndex, text } = asObject(payload);
+  const log = asArray(changesLog);
+  if (!Number.isInteger(changeIndex) || !isPlainObject(log[changeIndex]) || typeof text !== 'string' || !str(text)) return null;
+  const change = log[changeIndex];
+  const location = locateChange(tailored, change);
+  if (!location) return null;
+  const update = changeEditPayload(tailored, location, text);
+  const result = update && applyTailoredEdit(tailored, update);
+  if (!result) return null;
+  return {
+    resume: result.resume,
+    edit: result.edit,
+    changesLog: log.map((c, i) => (i === changeIndex ? { ...c, edited: str(text) } : c)),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Whole entries: add and remove
 // ---------------------------------------------------------------------------
 
